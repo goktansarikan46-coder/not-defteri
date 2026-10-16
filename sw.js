@@ -1,7 +1,7 @@
 // Uygulama dosyalarını önbelleğe alır; tablet internete bağlı olmasa da uygulama açılır.
 // İnternet varsa her zaman sunucudaki en yeni dosya kullanılır (güncellemeler hemen gelir);
 // internet yoksa ya da sunucu birkaç saniye içinde cevap vermezse önbellekteki kopya açılır.
-const CACHE = 'not-defteri-v9';
+const CACHE = 'not-defteri-v10';
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',
@@ -24,6 +24,9 @@ const SHELL = [
   'vendor/pdf-lib.min.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
+  'icons/icon-maskable-192.png',
+  'icons/icon-maskable-512.png',
+  'icons/mascot.svg',
 ];
 
 self.addEventListener('install', (event) => {

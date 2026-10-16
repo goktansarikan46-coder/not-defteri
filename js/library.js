@@ -110,7 +110,7 @@ export async function renderLibrary() {
     return;
   }
   if (!subFolders.length && !nbs.length) {
-    grid.innerHTML = `<div class="empty">${icon('folder')}<p><b>${current === 'root' ? 'Kitaplığın boş' : 'Bu klasör boş'}</b></p>
+    grid.innerHTML = `<div class="empty"><img class="empty-mascot" src="icons/mascot.svg" alt=""><p><b>${current === 'root' ? 'Kitaplığın boş' : 'Bu klasör boş'}</b></p>
       <p>Sağ üstten <b>PDF aç</b> ile bir PDF ekle, <b>Boş defter</b> oluştur ya da notlarını ayırmak için <b>Yeni klasör</b> aç.</p></div>`;
     return;
   }

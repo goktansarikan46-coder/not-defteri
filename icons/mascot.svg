@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Not Defteri maskotu: elinde kalem tutan tatlı tilki (özgün çizim) -->
+  <defs>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFA552"/>
+      <stop offset="1" stop-color="#F07A2A"/>
+    </linearGradient>
+    <linearGradient id="tailFur" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#F07A2A"/>
+      <stop offset="1" stop-color="#FF9C45"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Kuyruk (gövdenin arkasında) -->
+  <path d="M318 410 C 380 420, 438 380, 436 318 C 434 270, 400 238, 372 246 C 392 280, 384 330, 340 352 C 318 364, 304 384, 318 410 Z" fill="url(#tailFur)"/>
+  <path d="M372 246 C 400 238, 434 270, 436 318 C 418 300, 398 292, 384 296 C 392 278, 388 258, 372 246 Z" fill="#FFF3E4"/>
+
+  <!-- Gövde -->
+  <path d="M182 392 C 176 336, 210 304, 256 304 C 302 304, 336 336, 330 392 C 326 432, 298 452, 256 452 C 214 452, 186 432, 182 392 Z" fill="url(#fur)"/>
+  <path d="M214 400 C 212 362, 232 342, 256 342 C 280 342, 300 362, 298 400 C 296 428, 280 440, 256 440 C 232 440, 216 428, 214 400 Z" fill="#FFF3E4"/>
+  <!-- Ayaklar -->
+  <ellipse cx="220" cy="452" rx="30" ry="16" fill="#5B3A29"/>
+  <ellipse cx="292" cy="452" rx="30" ry="16" fill="#5B3A29"/>
+
+  <!-- Kalem (iki patiyle tutuluyor, ucu sağ yukarıda) -->
+  <g transform="rotate(-22 256 400)">
+    <rect x="178" y="388" width="152" height="24" rx="5" fill="#FFD43B"/>
+    <rect x="178" y="388" width="152" height="8" rx="4" fill="#FFE57A"/>
+    <rect x="164" y="388" width="20" height="24" rx="6" fill="#FF8FA3"/>
+    <rect x="180" y="388" width="8" height="24" fill="#B9C3D0"/>
+    <path d="M330 388 L 360 400 L 330 412 Z" fill="#F5D7B0"/>
+    <path d="M350 396 L 360 400 L 350 404 Z" fill="#3A2A20"/>
+  </g>
+  <!-- Kollar ve patiler -->
+  <path d="M198 336 C 180 360, 190 404, 214 418 C 230 424, 240 410, 232 396 C 224 380, 222 356, 214 340 Z" fill="url(#fur)"/>
+  <circle cx="222" cy="413" r="15" fill="#5B3A29"/>
+  <path d="M314 336 C 334 352, 326 380, 304 392 C 290 398, 280 386, 286 374 C 292 364, 300 350, 300 338 Z" fill="url(#fur)"/>
+  <circle cx="293" cy="385" r="15" fill="#5B3A29"/>
+
+  <!-- Kulaklar -->
+  <path d="M150 196 C 132 140, 140 84, 160 62 C 182 74, 220 112, 236 150 Z" fill="url(#fur)"/>
+  <path d="M164 168 C 156 132, 160 104, 168 90 C 182 102, 204 128, 214 152 Z" fill="#FFE1C7"/>
+  <path d="M362 196 C 380 140, 372 84, 352 62 C 330 74, 292 112, 276 150 Z" fill="url(#fur)"/>
+  <path d="M348 168 C 356 132, 352 104, 344 90 C 330 102, 308 128, 298 152 Z" fill="#FFE1C7"/>
+
+  <!-- Baş -->
+  <path d="M256 118 C 342 118, 392 168, 392 230 C 392 296, 334 336, 256 336 C 178 336, 120 296, 120 230 C 120 168, 170 118, 256 118 Z" fill="url(#fur)"/>
+  <!-- Yanak ve ağız çevresi (beyaz maske) -->
+  <path d="M128 250 C 150 238, 196 236, 230 262 C 244 272, 250 280, 256 280 C 262 280, 268 272, 282 262 C 316 236, 362 238, 384 250 C 374 302, 322 334, 256 334 C 190 334, 138 302, 128 250 Z" fill="#FFF3E4"/>
+  <!-- Alındaki küçük tutam -->
+  <path d="M240 122 C 248 138, 264 138, 272 122 C 264 128, 248 128, 240 122 Z" fill="#E86F22"/>
+
+  <!-- Gözler -->
+  <ellipse cx="200" cy="232" rx="21" ry="25" fill="#2B1B12"/>
+  <ellipse cx="312" cy="232" rx="21" ry="25" fill="#2B1B12"/>
+  <circle cx="207" cy="222" r="8" fill="#fff"/>
+  <circle cx="319" cy="222" r="8" fill="#fff"/>
+  <circle cx="193" cy="242" r="3.5" fill="#fff" opacity=".8"/>
+  <circle cx="305" cy="242" r="3.5" fill="#fff" opacity=".8"/>
+
+  <!-- Yanaklarda pembelik -->
+  <ellipse cx="164" cy="270" rx="22" ry="12" fill="#FF8FA3" opacity=".55"/>
+  <ellipse cx="348" cy="270" rx="22" ry="12" fill="#FF8FA3" opacity=".55"/>
+
+  <!-- Burun ve gülümseme -->
+  <path d="M244 268 C 244 260, 268 260, 268 268 C 268 276, 260 282, 256 282 C 252 282, 244 276, 244 268 Z" fill="#2B1B12"/>
+  <path d="M236 290 C 242 300, 252 300, 256 290 C 260 300, 270 300, 276 290" fill="none" stroke="#2B1B12" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
