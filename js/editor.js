@@ -43,7 +43,11 @@ const SHAPE_HOLD_MS = 550; // kalemi bu kadar bekletince çizgi düzgün şekle 
 const MAX_FAVORITES = 8;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 5;
-const MAX_CANVAS_AREA = 12_000_000; // tablet belleğini korumak için sayfa başına üst sınır
+// Sayfa başına tuval boyutu üst sınırı (piksel). Cihazın belleğine göre ayarlanır: büyük PDF'lerde
+// birkaç sayfa aynı anda bellekte durduğu için yüksek sınır uygulamanın kapanmasına yol açıyordu.
+const DEVICE_MEMORY = navigator.deviceMemory || 4;
+const MAX_CANVAS_AREA = DEVICE_MEMORY >= 8 ? 8_000_000 : DEVICE_MEMORY >= 4 ? 6_000_000 : 4_000_000;
+let pdfQueue = Promise.resolve(); // PDF sayfaları tek tek çizilir
 const PALM_GUARD_MS = 450; // kalem yakındayken parmak/avuç dokunuşları yok sayılır
 const A4 = { w: 595.28, h: 841.89 };
 
@@ -202,9 +206,10 @@ class PageView {
     const key = w + 'x' + h;
     if (key === this.resKey) return;
     this.resKey = key;
+    this.inkSize = { w, h };
     const seq = ++this.seq;
-    this.ink.width = w;
-    this.ink.height = h;
+    // Not katmanı yalnızca sayfada not varsa bellekte tutulur (boş sayfalar için tam boy tuval açılmaz).
+    this.ink.width = this.ink.height = 0;
     this.drawInk(selectionHidden(this));
     if (this.page.kind !== 'pdf') {
       // Şablon (çizgi/kare/nokta) vektörel olduğu için her çözünürlükte anında çizilir.
@@ -219,25 +224,33 @@ class PageView {
       return;
     }
     if (!ed.pdf) return;
-    // Önce görünmeyen bir tuvale çiz, bitince değiştir: yakınlaştırırken titreme olmasın.
-    const tmp = document.createElement('canvas');
-    tmp.width = w;
-    tmp.height = h;
-    try {
-      const pp = await ed.pdf.getPage(this.page.pdfPage);
-      if (seq !== this.seq) return;
-      this.task?.cancel();
-      this.task = pp.render({ canvasContext: tmp.getContext('2d'), viewport: pp.getViewport({ scale: w / this.page.w }) });
-      await this.task.promise;
-      if (seq !== this.seq) return;
-      this.bg.width = w;
-      this.bg.height = h;
-      this.bg.getContext('2d').drawImage(tmp, 0, 0);
-    } catch (err) {
-      if (err?.name !== 'RenderingCancelledException') console.error(err);
-    } finally {
-      tmp.width = tmp.height = 0;
-    }
+    // PDF sayfaları sırayla, tek tek çizilir: aynı anda birçok büyük sayfa çizmek belleği taşırıp
+    // uygulamanın kapanmasına yol açıyordu. Sıra gelene kadar sayfa ekrandan çıktıysa atlanır.
+    const job = async () => {
+      if (seq !== this.seq || !ed?.pdf) return;
+      const tmp = document.createElement('canvas');
+      tmp.width = w;
+      tmp.height = h;
+      try {
+        this.pp ??= await ed.pdf.getPage(this.page.pdfPage);
+        if (seq !== this.seq) return;
+        this.task = this.pp.render({ canvasContext: tmp.getContext('2d'), viewport: this.pp.getViewport({ scale: w / this.page.w }) });
+        await this.task.promise;
+        if (seq !== this.seq) return;
+        // Kopyalamak yerine yeni tuvali yerine koy: aynı anda iki tam boy kopya bellekte durmasın.
+        tmp.className = 'bg';
+        const old = this.bg;
+        old.replaceWith(tmp);
+        old.width = old.height = 0;
+        this.bg = tmp;
+      } catch (err) {
+        if (err?.name !== 'RenderingCancelledException') console.error(err);
+      } finally {
+        this.task = null;
+        if (tmp !== this.bg) tmp.width = tmp.height = 0;
+      }
+    };
+    pdfQueue = pdfQueue.then(job, job);
   }
 
   release() {
@@ -247,6 +260,22 @@ class PageView {
     this.resKey = null;
     if (this.bg) this.bg.width = this.bg.height = 0;
     this.ink.width = this.ink.height = 0;
+    // pdf.js'in bu sayfa için tuttuğu yazı tipi / resim verilerini de bırak.
+    try {
+      this.pp?.cleanup();
+    } catch {
+      /* sayfa o an çiziliyorsa temizlik sonra yapılır */
+    }
+    this.pp = null;
+  }
+
+  // Not katmanını gerektiğinde aç (sayfa görünür ve üzerinde not varken).
+  ensureInk() {
+    if (!this.ink.width && this.visible && this.inkSize) {
+      this.ink.width = this.inkSize.w;
+      this.ink.height = this.inkSize.h;
+    }
+    return this.ink.width > 0;
   }
 
   inkContext() {
@@ -258,7 +287,12 @@ class PageView {
 
   // exclude: o an taşınan (canlı katmanda çizilen) çizgiler
   drawInk(exclude) {
-    if (!this.ink.width) return;
+    if (!this.strokes?.length) {
+      // Not kalmadıysa katmanı bellekten tamamen bırak.
+      if (this.ink.width) this.ink.width = this.ink.height = 0;
+      return;
+    }
+    if (!this.ensureInk()) return;
     const ctx = this.ink.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.ink.width, this.ink.height);
@@ -267,12 +301,13 @@ class PageView {
 
   addStroke(s) {
     if (this.ink.width) drawStroke(this.inkContext(), s);
+    else this.drawInk();
   }
 }
 
 function buildPages() {
   sheetEl.innerHTML = '';
-  ed.io = new IntersectionObserver(onIntersect, { root: pagesEl, rootMargin: '100% 50%' });
+  ed.io = new IntersectionObserver(onIntersect, { root: pagesEl, rootMargin: '60% 0px' });
   for (const page of ed.nb.pages) {
     const v = new PageView(page);
     ed.views.push(v);
@@ -1254,8 +1289,7 @@ function finishActive() {
 }
 
 function attachLive(v) {
-  const w = v.ink.width || Math.round(v.el.clientWidth * (window.devicePixelRatio || 1));
-  const h = v.ink.height || Math.round(v.el.clientHeight * (window.devicePixelRatio || 1));
+  const { w, h } = v.inkSize || v.targetSize(); // canlı katman da aynı boyut sınırına uyar
   if (liveCanvas.width !== w || liveCanvas.height !== h) {
     liveCanvas.width = w;
     liveCanvas.height = h;
@@ -2065,12 +2099,15 @@ async function buildPdf() {
         await renderPdfPage(ed.pdf, page, c);
         const img = await out.embedJpg(await canvasBytes(c, 'image/jpeg', 0.9));
         p.drawImage(img, { x: 0, y: 0, width: page.w, height: page.h });
+        c.width = c.height = 0;
       }
     }
     const strokes = ed.ink.get(page.id);
     if (!strokes?.length) continue;
     await preloadImages(strokes);
-    const png = await out.embedPng(await canvasBytes(renderInkLayer(page, strokes, 3), 'image/png'));
+    const layer = renderInkLayer(page, strokes, 2.5);
+    const png = await out.embedPng(await canvasBytes(layer, 'image/png'));
+    layer.width = layer.height = 0; // her sayfadan sonra belleği hemen bırak
     drawOverlay(p, png, page, degrees);
   }
   return out.save();

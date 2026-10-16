@@ -332,7 +332,7 @@ export async function renderThumb(pdfDoc, page, strokes, width = THUMB_WIDTH) {
 
 // Dışa aktarma için şeffaf arka planlı yüksek çözünürlüklü mürekkep katmanı.
 export function renderInkLayer(page, strokes, scale) {
-  const maxArea = 20_000_000;
+  const maxArea = 10_000_000; // büyük sayfalarda belleği taşırmasın
   const k = Math.min(scale, Math.sqrt(maxArea / (page.w * page.h)));
   const c = document.createElement('canvas');
   c.width = Math.round(page.w * k);
