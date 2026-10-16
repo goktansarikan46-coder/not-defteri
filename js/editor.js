@@ -18,9 +18,16 @@ import {
   strokesBounds,
   transformStroke,
   strokeInPolygon,
+  isBox,
+  textHeight,
+  TEXT_FONT,
+  TEXT_LINE,
+  setImageReadyHandler,
+  preloadImages,
 } from './render.js';
 import { recognizeShape } from './shapes.js';
-import { uid, loadJSON, saveJSON, round2, clamp } from './util.js';
+import { pdfUtil } from './pdf.js';
+import { uid, loadJSON, saveJSON, round2, clamp, fold } from './util.js';
 
 const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
 const HL_COLORS = ['#facc15', '#4ade80', '#f472b6', '#60a5fa', '#fb923c'];
@@ -47,6 +54,14 @@ settings.hlSize ??= OLD_HL_WIDTHS[settings.hlWidth] ?? 14;
 settings.eraserMode ??= 'stroke'; // 'stroke': dokunulan çizginin tamamı, 'partial': yalnızca üzerinden geçilen kısım
 settings.eraserSize ??= 1;
 settings.favorites ??= [];
+settings.textColor ??= 0;
+settings.textSize ??= 1;
+const TEXT_SIZES = [
+  { size: 12, label: 'Küçük' },
+  { size: 16, label: 'Normal' },
+  { size: 22, label: 'Büyük' },
+  { size: 30, label: 'Başlık' },
+];
 const eraserRadius = () => ERASER_SIZES[settings.eraserSize] ?? ERASER_SIZES[1];
 const saveSettings = () => saveJSON('nd-tools', settings);
 
@@ -66,6 +81,12 @@ export function initEditor(opts) {
   pagesEl.append(sheetEl);
   liveCanvas = document.createElement('canvas');
   liveCanvas.className = 'live';
+  // Resimler yüklenince görünen sayfaları yeniden çiz (kısa aralıklarla gelen yüklemeleri birleştir).
+  let imgTimer = 0;
+  setImageReadyHandler(() => {
+    clearTimeout(imgTimer);
+    imgTimer = setTimeout(() => ed?.views.forEach((v) => v.visible && v.drawInk(selectionHidden(v))), 30);
+  });
   buildToolbar();
   bindInput();
   window.addEventListener('resize', () => {
@@ -110,8 +131,10 @@ export async function closeEditor() {
   const e = ed;
   if (sizePop) closeSizePop();
   if (favPop) closeFavPop();
+  commitText();
   clearSelection();
-  closeOverlays();
+  while (closeOverlays());
+  pageTextCache.clear();
   active = null;
   touches.clear();
   stopInertia();
@@ -154,6 +177,7 @@ class PageView {
     this.ink = document.createElement('canvas');
     this.ink.className = 'ink';
     this.el.append(this.ink);
+    updateBookmark(this);
   }
 
   get strokes() {
@@ -181,7 +205,7 @@ class PageView {
     const seq = ++this.seq;
     this.ink.width = w;
     this.ink.height = h;
-    this.drawInk();
+    this.drawInk(selectionHidden(this));
     if (this.page.kind !== 'pdf') {
       // Şablon (çizgi/kare/nokta) vektörel olduğu için her çözünürlükte anında çizilir.
       if (this.bg) {
@@ -281,6 +305,7 @@ function layout() {
     widest = Math.max(widest, w);
   }
   sheetEl.style.width = Math.max(cw, widest + 32) + 'px';
+  if (textEdit) styleTextEditor(false); // yazı boyu yakınlaştırmayla birlikte ölçeklensin
 }
 
 function scheduleRerender() {
@@ -343,12 +368,16 @@ async function pageMenu() {
       ...(clipboard?.length ? [{ id: 'paste', label: 'Yapıştır (kopyalanan yazı)' }] : []),
       { id: 'add', label: 'Sayfa ekle…' },
       { id: 'duplicate', label: 'Bu sayfayı çoğalt' },
+      { id: 'bookmark', label: ed.views[idx].page.bookmark ? 'Yer imini kaldır' : 'Yer imi ekle' },
       { id: 'overview', label: 'Tüm sayfalar' },
+      ...(Math.abs(ed.zoom - 1) > 0.01 ? [{ id: 'fit', label: 'Sayfayı ekrana sığdır' }] : []),
       { id: 'delete', label: 'Bu sayfayı sil', danger: true },
     ],
   });
   if (!ed) return;
-  if (action === 'paste') pasteClipboard(idx);
+  if (action === 'bookmark') toggleBookmark(idx);
+  else if (action === 'fit') zoomBy(1 / ed.zoom);
+  else if (action === 'paste') pasteClipboard(idx);
   else if (action === 'add') addPageDialog(idx);
   else if (action === 'duplicate') duplicatePage(idx);
   else if (action === 'overview') openOverview();
@@ -435,6 +464,7 @@ async function deletePage(v) {
   });
   if (!ok || !ed) return;
   if (selection?.v === v) clearSelection();
+  if (textEdit?.v === v) commitText();
   const id = v.page.id;
   ed.io.unobserve(v.el);
   v.release();
@@ -460,6 +490,11 @@ async function deletePage(v) {
 let overview = null; // { el, grid, io, thumbs: Map }
 
 export function closeOverlays() {
+  if (search) {
+    search.el.remove();
+    search = null;
+    return true;
+  }
   if (!overview) return false;
   overview.io.disconnect();
   overview.el.remove();
@@ -472,10 +507,16 @@ function openOverview() {
   const el = document.createElement('div');
   el.className = 'overview';
   el.innerHTML = `<header class="ov-head"><b>Tüm sayfalar</b><span class="ov-hint">Dokun: sayfaya git · Tutamaktan sürükle: sırayı değiştir</span>
+    <button class="chip" id="ov-bm">${icon('bookmark')}<span>Yer imleri</span></button>
     <button class="icon" id="ov-close" title="Kapat">${icon('close')}</button></header><div class="ov-grid"></div>`;
   $('editor').append(el);
   const grid = el.querySelector('.ov-grid');
-  overview = { el, grid, io: new IntersectionObserver(onThumbVisible, { root: grid, rootMargin: '300px' }), thumbs: new Map() };
+  overview = { el, grid, io: new IntersectionObserver(onThumbVisible, { root: grid, rootMargin: '300px' }), thumbs: new Map(), onlyBookmarks: false };
+  el.querySelector('#ov-bm').onclick = (e) => {
+    overview.onlyBookmarks = !overview.onlyBookmarks;
+    e.currentTarget.classList.toggle('active', overview.onlyBookmarks);
+    refreshOverview();
+  };
   // Genel bakış tarayıcı geçmişine bir adım olarak eklenir: geri hareketi onu kapatır, defteri değil.
   history.pushState({ ...history.state, overview: true }, '');
   el.querySelector('#ov-close').onclick = () => history.back();
@@ -489,9 +530,14 @@ function refreshOverview() {
   io.disconnect();
   grid.innerHTML = '';
   const cur = currentIndex();
+  const filtering = overview.onlyBookmarks;
+  if (filtering && !ed.views.some((v) => v.page.bookmark)) {
+    grid.innerHTML = '<p class="search-empty">Henüz yer imi yok. Bir sayfada ⋮ menüsünden "Yer imi ekle"yi seç.</p>';
+  }
   ed.views.forEach((v, i) => {
+    if (filtering && !v.page.bookmark) return;
     const tile = document.createElement('div');
-    tile.className = 'ov-tile' + (i === cur ? ' current' : '');
+    tile.className = 'ov-tile' + (i === cur ? ' current' : '') + (v.page.bookmark ? ' bookmarked' : '') + (filtering ? ' no-drag' : '');
     tile.dataset.id = v.page.id;
     tile.innerHTML = `<button class="ov-thumb" style="aspect-ratio:${v.page.w}/${v.page.h}"></button>
       <div class="ov-foot"><button class="ov-grip" title="Sürükleyerek taşı">${icon('grip')}</button>
@@ -515,11 +561,13 @@ async function tileMenu(pageId) {
     actions: [
       { id: 'duplicate', label: 'Çoğalt' },
       { id: 'add', label: 'Sonrasına sayfa ekle…' },
+      { id: 'bookmark', label: ed.views[idx].page.bookmark ? 'Yer imini kaldır' : 'Yer imi ekle' },
       { id: 'delete', label: 'Sil', danger: true },
     ],
   });
   if (!ed) return;
-  if (action === 'duplicate') duplicatePage(idx);
+  if (action === 'bookmark') toggleBookmark(idx);
+  else if (action === 'duplicate') duplicatePage(idx);
   else if (action === 'delete') deletePage(ed.views[idx]);
   else if (action === 'add') {
     const choice = await ui.templatePicker({ title: 'Sayfa ekle' });
@@ -556,6 +604,7 @@ async function onThumbVisible(entries) {
 // Tutamaktan sürükle-bırak: kart parmağı/kalemi takip eder, bırakılınca yeni sıra kaydedilir.
 function startTileDrag(e, tile) {
   e.preventDefault();
+  if (overview.onlyBookmarks) return; // filtreli görünümde sıralama yapılmaz (gizli sayfalar karışmasın)
   const grip = e.currentTarget;
   try {
     grip.setPointerCapture(e.pointerId);
@@ -660,18 +709,18 @@ function buildToolbar() {
     <button class="icon tool" data-tool="hl" title="Fosforlu kalem">${icon('highlighter')}</button>
     <button class="icon tool" data-tool="eraser" title="Silgi">${icon('eraser')}</button>
     <button class="icon tool" data-tool="lasso" title="Kement: çevresini çizerek seç, taşı, büyüt, sil">${icon('lasso')}</button>
+    <button class="icon tool" data-tool="text" title="Metin kutusu: sayfaya dokun ve yaz">${icon('text')}</button>
     <span class="sep"></span>
     <div class="group" id="tb-colors"></div>
     <div class="group" id="tb-widths"></div>
     <button class="icon" id="tb-fav" title="Favori kalemler">${icon('star')}</button>
     <span class="lasso-hint" id="tb-lasso-hint">Seçmek istediğin yazının çevresini çiz</span>
     <span class="sep"></span>
-    <button class="icon" id="tb-undo" title="Geri al">${icon('undo')}</button>
-    <button class="icon" id="tb-redo" title="Yinele">${icon('redo')}</button>
-    <span class="sep"></span>
-    <button class="icon" id="tb-zoom-out" title="Uzaklaştır">${icon('zoomOut')}</button>
-    <button class="icon" id="tb-zoom-in" title="Yakınlaştır">${icon('zoomIn')}</button>
+    <button class="icon" id="tb-undo" title="Geri al (iki parmakla dokun)">${icon('undo')}</button>
+    <button class="icon" id="tb-redo" title="Yinele (üç parmakla dokun)">${icon('redo')}</button>
     <span class="spacer"></span>
+    <button class="icon" id="tb-image" title="Resim ekle">${icon('image')}</button>
+    <button class="icon" id="tb-search" title="Ara">${icon('search')}</button>
     <button class="icon" id="tb-overview" title="Tüm sayfalar">${icon('pages')}</button>
     <button class="icon" id="tb-page-menu" title="Sayfa işlemleri (sayfa ekle, çoğalt, sil)">${icon('more')}</button>
     <button class="icon" id="tb-finger" title="Parmakla çizim (kapalıyken parmak sayfayı kaydırır)">${icon('hand')}</button>
@@ -687,7 +736,10 @@ function buildToolbar() {
   };
   tb.querySelectorAll('.tool').forEach((b) => {
     b.onclick = () => {
-      if (settings.tool !== b.dataset.tool) clearSelection();
+      if (settings.tool !== b.dataset.tool) {
+        clearSelection();
+        commitText();
+      }
       settings.tool = b.dataset.tool;
       saveSettings();
       updateToolbar();
@@ -696,8 +748,17 @@ function buildToolbar() {
   $('tb-fav').onclick = () => (favPop ? closeFavPop() : openFavPop($('tb-fav')));
   $('tb-undo').onclick = undo;
   $('tb-redo').onclick = redo;
-  $('tb-zoom-in').onclick = () => zoomBy(1.25);
-  $('tb-zoom-out').onclick = () => zoomBy(0.8);
+  $('tb-image').onclick = () => $('image-input').click();
+  $('image-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) await insertImage(file);
+  });
+  $('tb-search').onclick = openSearch;
+  // Yazı kutusu açıkken renk/boy düğmelerine dokunmak kutuyu kapatmasın (odak kutuda kalsın).
+  tb.addEventListener('pointerdown', (e) => {
+    if (textEdit && e.target.closest('#tb-colors, #tb-widths')) e.preventDefault();
+  });
   $('tb-page-menu').onclick = pageMenu;
   $('tb-overview').onclick = openOverview;
   $('tb-finger').onclick = () => {
@@ -717,7 +778,7 @@ function updateToolbar() {
   colors.innerHTML = '';
   widths.innerHTML = '';
   colors.hidden = widths.hidden = tool === 'lasso';
-  $('tb-fav').hidden = tool === 'eraser' || tool === 'lasso';
+  $('tb-fav').hidden = tool === 'eraser' || tool === 'lasso' || tool === 'text';
   $('tb-fav').classList.toggle('active', !!favPop);
   $('tb-lasso-hint').hidden = tool !== 'lasso' || !!selection;
   if (tool === 'eraser') {
@@ -746,6 +807,33 @@ function updateToolbar() {
       };
       widths.append(b);
     });
+  } else if (tool === 'text') {
+    // Metin: kalem renkleri ve dört yazı boyu
+    PEN_COLORS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (settings.textColor === i ? ' active' : '');
+      b.style.setProperty('--c', c);
+      b.title = 'Yazı rengi';
+      b.onclick = () => {
+        settings.textColor = i;
+        saveSettings();
+        updateToolbar();
+        styleTextEditor();
+      };
+      colors.append(b);
+    });
+    TEXT_SIZES.forEach((t, i) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (settings.textSize === i ? ' active' : '');
+      b.textContent = t.label;
+      b.onclick = () => {
+        settings.textSize = i;
+        saveSettings();
+        updateToolbar();
+        styleTextEditor();
+      };
+      widths.append(b);
+    });
   } else if (tool !== 'lasso') {
     const isHl = tool === 'hl';
     const palette = isHl ? HL_COLORS : PEN_COLORS;
@@ -770,8 +858,8 @@ function updateToolbar() {
     b.onclick = () => (sizePop ? closeSizePop() : openSizePop(b));
     widths.append(b);
   }
-  if (favPop && (tool === 'eraser' || tool === 'lasso')) closeFavPop();
-  if (sizePop && (tool === 'eraser' || tool === 'lasso' || sizePop.dataset.tool !== tool)) closeSizePop();
+  if (favPop && (tool === 'eraser' || tool === 'lasso' || tool === 'text')) closeFavPop();
+  if (sizePop && sizePop.dataset.tool !== tool) closeSizePop();
   else renderSizePop(); // renk değiştiyse önizleme de güncellensin
   $('tb-finger').classList.toggle('active', settings.fingerDraw);
   $('tb-undo').disabled = !ed?.undo.length;
@@ -783,7 +871,8 @@ function updateToolbar() {
 let sizePop = null;
 const sizeOf = (tool) => (tool === 'hl' ? settings.hlSize : settings.penSize);
 const fmtSize = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1)).replace('.', ',');
-const currentColor = (tool) => (tool === 'hl' ? HL_COLORS[settings.hlColor] : PEN_COLORS[settings.penColor]);
+const currentColor = (tool) =>
+  tool === 'hl' ? HL_COLORS[settings.hlColor] : tool === 'text' ? PEN_COLORS[settings.textColor] : PEN_COLORS[settings.penColor];
 
 // Düğmedeki nokta, çizginin sayfadaki yaklaşık kalınlığını gösterir.
 function sizeDot(tool, size, color) {
@@ -967,6 +1056,7 @@ function bindInput() {
 
 function onDown(e) {
   if (!ed || e.target.closest('button')) return;
+  if (e.target.closest('.text-editor')) return; // yazı kutusunun içinde imleç yerleştirme
   const now = performance.now();
   // Seçimi parmakla da sürükleyebilmek için: seçim kutusuna dokunuş kaydırma sayılmaz.
   const onSelection = selection && e.target.closest('.sel-box');
@@ -997,6 +1087,12 @@ function onDown(e) {
     startSelectionDrag(e, base, at, e.target.closest('.sel-handle') ? 'resize' : 'move');
     return;
   }
+  if (settings.tool === 'text' && !penButton) {
+    clearSelection();
+    startTextAt(v, at.x, at.y);
+    return;
+  }
+  commitText();
   if (settings.tool === 'lasso' && !penButton) {
     clearSelection();
     active = { ...base, kind: 'lasso', poly: [at.x, at.y] };
@@ -1088,7 +1184,7 @@ function trySnap(a) {
   if (!pts) return;
   a.stroke.pts = pts;
   a.snapped = true;
-  navigator.vibrate?.(12);
+  if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.(12); // şekle dönüştü: kısa titreşim
   requestLive();
 }
 
@@ -1548,6 +1644,17 @@ function endTouch(e) {
   if (touches.size === 0 && tap) {
     const t = tap;
     tap = null;
+    // Metin aracında parmakla tek dokunuş da yazı kutusu açar.
+    if (settings.tool === 'text' && t.max === 1 && !t.moved && performance.now() - t.start <= TAP_MAX_MS) {
+      const o = [...t.origins.values()][0];
+      const pageEl = document.elementFromPoint(o.x, o.y)?.closest('.page');
+      if (pageEl) {
+        const r = pageEl.getBoundingClientRect();
+        const k = pageEl._view.page.w / r.width;
+        setTimeout(() => startTextAt(pageEl._view, (o.x - r.left) * k, (o.y - r.top) * k), 0);
+      }
+      return;
+    }
     if (!t.moved && t.max >= 2 && performance.now() - t.start <= TAP_MAX_MS) {
       pinch = null;
       if (t.max === 2) {
@@ -1604,6 +1711,282 @@ function capture(pointerId) {
 function stopInertia() {
   if (inertiaRaf) cancelAnimationFrame(inertiaRaf);
   inertiaRaf = 0;
+}
+
+// O an sayfadan gizlenmesi gereken öğeler: düzenlenen yazı kutusu ya da sürüklenen seçim.
+function selectionHidden(v) {
+  const hide = new Set();
+  if (textEdit?.v === v && textEdit.item) hide.add(textEdit.item);
+  if (active && (active.kind === 'move' || active.kind === 'resize') && selection?.v === v) selection.strokes.forEach((s) => hide.add(s));
+  return hide.size ? hide : undefined;
+}
+
+/* ---------------- Metin kutusu ---------------- */
+
+let textEdit = null; // { v, x, y, w, item (düzenlenen eski kutu ya da null), el }
+
+// Sayfada (x, y) noktasına dokunuldu: oradaki metin kutusunu düzenle ya da yeni kutu aç.
+function startTextAt(v, x, y) {
+  commitText();
+  const existing = [...v.strokes].reverse().find((s) => s.tool === 'text' && x >= s.pts[0] && x <= s.pts[3] && y >= s.pts[1] && y <= s.pts[4]);
+  const size = existing ? existing.width : TEXT_SIZES[settings.textSize].size;
+  const w = existing ? existing.pts[3] - existing.pts[0] : Math.max(80, Math.min(320, v.page.w - x - 24));
+  const el = document.createElement('textarea');
+  el.className = 'text-editor';
+  el.spellcheck = true;
+  el.value = existing?.text || '';
+  el.placeholder = 'Yazmaya başla…';
+  textEdit = {
+    v,
+    x: existing ? existing.pts[0] : x,
+    y: existing ? existing.pts[1] : y - size * 0.7,
+    w,
+    item: existing,
+    el,
+    size,
+    color: existing ? existing.color : PEN_COLORS[settings.textColor],
+  };
+  if (existing) {
+    // Düzenlenen kutunun rengi / boyu araç çubuğunda görünsün.
+    const ci = PEN_COLORS.indexOf(existing.color);
+    if (ci >= 0) settings.textColor = ci;
+    const si = TEXT_SIZES.findIndex((t) => t.size === existing.width);
+    if (si >= 0) settings.textSize = si;
+    updateToolbar();
+    v.drawInk(new Set([existing]));
+  }
+  el.addEventListener('input', autoGrowText);
+  el.addEventListener('blur', () => setTimeout(() => textEdit?.el === el && document.activeElement !== el && commitText(), 0));
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') el.blur();
+  });
+  v.el.append(el);
+  styleTextEditor(false);
+  el.focus();
+}
+
+// applySettings: araç çubuğundan seçilen renk / boy yazılan kutuya uygulansın.
+function styleTextEditor(applySettings = true) {
+  if (!textEdit) return;
+  const { v, el } = textEdit;
+  if (applySettings) {
+    textEdit.size = TEXT_SIZES[settings.textSize].size;
+    textEdit.color = PEN_COLORS[settings.textColor];
+  }
+  const pct = (val, total) => (val / total) * 100 + '%';
+  Object.assign(el.style, {
+    left: pct(textEdit.x, v.page.w),
+    top: pct(textEdit.y, v.page.h),
+    width: pct(textEdit.w, v.page.w),
+    fontSize: textEdit.size * ed.pxPerPt + 'px',
+    lineHeight: String(TEXT_LINE),
+    fontFamily: TEXT_FONT,
+    color: textEdit.color,
+  });
+  autoGrowText();
+}
+
+function autoGrowText() {
+  const el = textEdit?.el;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
+function commitText() {
+  if (!textEdit) return;
+  const { v, x, y, w, item, el, size, color } = textEdit;
+  textEdit = null;
+  el.remove();
+  const text = el.value.replace(/\s+$/, '');
+  if (!ed || !ed.views.includes(v)) return;
+  if (!text) {
+    if (item) replaceStrokes(v, [item], [null]);
+    else v.drawInk();
+    return;
+  }
+  const h = textHeight(text, size, w);
+  const next = { tool: 'text', text, color, width: size, pts: [round2(x), round2(y), 0.5, round2(x + w), round2(y + h), 0.5] };
+  if (item) {
+    if (item.text === next.text && item.color === next.color && item.width === next.width) return v.drawInk();
+    replaceStrokes(v, [item], [next]);
+  } else {
+    const strokes = v.strokes;
+    const before = strokes.slice();
+    strokes.push(next);
+    pushUndo({ type: 'snapshot', pageId: v.page.id, before, after: strokes.slice() });
+    v.drawInk();
+    markDirty(v.page.id);
+  }
+}
+
+/* ---------------- Resim ekleme ---------------- */
+
+const IMAGE_MAX_PX = 1600;
+
+async function insertImage(file) {
+  if (!ed) return;
+  const hide = ui.busy('Resim ekleniyor…');
+  try {
+    const bmp = await createImageBitmap(file);
+    // Büyük fotoğrafları küçült: notlarda yer kaplamasın, yedekler hafif kalsın.
+    const scale = Math.min(1, IMAGE_MAX_PX / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const png = file.type === 'image/png' && file.size < 600_000;
+    const src = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.85);
+    const v = ed.views[currentIndex()];
+    // Sayfanın görünen ortasına, sayfa genişliğinin en fazla %60'ı kadar yerleştir.
+    const w = Math.min(v.page.w * 0.6, c.width);
+    const h = (w * c.height) / c.width;
+    const r = v.el.getBoundingClientRect();
+    const view = pagesEl.getBoundingClientRect();
+    const midY = ((view.top + view.height / 2 - r.top) / r.height) * v.page.h;
+    const x = (v.page.w - w) / 2;
+    const y = clamp(midY - h / 2, 16, Math.max(16, v.page.h - h - 16));
+    addStrokes(v, [{ tool: 'image', src, color: '#000', width: 0, pts: [round2(x), round2(y), 0.5, round2(x + w), round2(y + h), 0.5] }]);
+    updateToolbar();
+    ui.toast('Resim eklendi. Sürükleyerek taşı, köşeden büyüt.');
+  } catch (err) {
+    console.error(err);
+    ui.toast('Resim eklenemedi');
+  } finally {
+    hide();
+  }
+}
+
+/* ---------------- Arama ---------------- */
+
+let search = null; // { el, input, list }
+const pageTextCache = new Map(); // pdf sayfa no → metin parçaları
+
+function openSearch() {
+  if (!ed || overview || search) return;
+  const el = document.createElement('div');
+  el.className = 'search-panel';
+  el.innerHTML = `<header class="ov-head"><b>Ara</b>
+      <input class="input search-input" type="search" placeholder="${ed.pdf ? 'PDF ve metin kutularında ara…' : 'Metin kutularında ara…'}" enterkeyhint="search">
+      <button class="icon" id="search-close" title="Kapat">${icon('close')}</button></header>
+    <div class="search-list"></div>`;
+  $('editor').append(el);
+  search = { el, input: el.querySelector('.search-input'), list: el.querySelector('.search-list') };
+  history.pushState({ ...history.state, search: true }, '');
+  el.querySelector('#search-close').onclick = () => history.back();
+  let timer = 0;
+  search.input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(runSearch, 300);
+  });
+  search.list.innerHTML = `<p class="search-empty">${
+    ed.pdf ? 'PDF içindeki yazılarda ve eklediğin metin kutularında arar. El yazısı aranamaz.' : 'Eklediğin metin kutularında arar. El yazısı aranamaz.'
+  }</p>`;
+  setTimeout(() => search?.input.focus(), 50);
+}
+
+const norm = fold;
+
+async function pageText(pdfPage) {
+  if (!pageTextCache.has(pdfPage)) {
+    const p = await ed.pdf.getPage(pdfPage);
+    const vp = p.getViewport({ scale: 1 });
+    const tc = await p.getTextContent();
+    // Her parça için sayfadaki dikdörtgeni (pt) de sakla: sonucu vurgulamak için.
+    const items = tc.items
+      .filter((it) => it.str?.trim())
+      .map((it) => {
+        const t = pdfUtil.transform(vp.transform, it.transform);
+        const h = Math.hypot(t[2], t[3]) || 10;
+        return { str: it.str, x: t[4], y: t[5] - h, w: it.width * vp.scale, h: h * 1.15 };
+      });
+    pageTextCache.set(pdfPage, items);
+  }
+  return pageTextCache.get(pdfPage);
+}
+
+async function runSearch() {
+  if (!search || !ed) return;
+  const q = norm(search.input.value.trim());
+  const list = search.list;
+  if (q.length < 2) {
+    list.innerHTML = '<p class="search-empty">En az 2 harf yaz.</p>';
+    return;
+  }
+  list.innerHTML = '<p class="search-empty">Aranıyor…</p>';
+  const results = [];
+  const token = (search.token = {});
+  for (let i = 0; i < ed.views.length; i++) {
+    const page = ed.views[i].page;
+    for (const s of ed.ink.get(page.id) || []) {
+      if (s.tool === 'text' && norm(s.text).includes(q)) results.push({ i, snippet: s.text, rect: { x: s.pts[0], y: s.pts[1], w: s.pts[3] - s.pts[0], h: s.pts[4] - s.pts[1] } });
+    }
+    if (page.kind === 'pdf' && ed.pdf) {
+      const items = await pageText(page.pdfPage);
+      if (search?.token !== token) return; // bu arada yeni arama başladı
+      for (const it of items) if (norm(it.str).includes(q)) results.push({ i, snippet: it.str, rect: it });
+    }
+    if (results.length >= 200) break;
+  }
+  if (search?.token !== token) return;
+  if (!results.length) {
+    list.innerHTML = '<p class="search-empty">Sonuç bulunamadı.</p>';
+    return;
+  }
+  list.innerHTML = `<p class="search-count">${results.length >= 200 ? '200+' : results.length} sonuç</p>`;
+  for (const r of results) {
+    const b = document.createElement('button');
+    b.className = 'search-hit-row';
+    const text = r.snippet.length > 140 ? r.snippet.slice(0, 140) + '…' : r.snippet;
+    const at = norm(text).indexOf(q);
+    const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    b.innerHTML = `<span class="search-page">Sayfa ${r.i + 1}</span><span>${
+      at >= 0 ? esc(text.slice(0, at)) + '<mark>' + esc(text.slice(at, at + q.length)) + '</mark>' + esc(text.slice(at + q.length)) : esc(text)
+    }</span>`;
+    b.onclick = () => {
+      history.back();
+      showHit(r);
+    };
+    list.append(b);
+  }
+}
+
+function showHit(r) {
+  const v = ed.views[r.i];
+  document.querySelectorAll('.search-mark').forEach((m) => m.remove());
+  const m = document.createElement('div');
+  m.className = 'search-mark';
+  const pct = (val, total) => (val / total) * 100 + '%';
+  Object.assign(m.style, {
+    left: pct(r.rect.x - 2, v.page.w),
+    top: pct(r.rect.y - 2, v.page.h),
+    width: pct(r.rect.w + 4, v.page.w),
+    height: pct(r.rect.h + 4, v.page.h),
+  });
+  v.el.append(m);
+  // İşaretlenen yeri ekranın ortasına getir.
+  const pageTop = v.el.offsetTop;
+  pagesEl.scrollTop = pageTop + (r.rect.y / v.page.h) * v.el.offsetHeight - pagesEl.clientHeight / 2;
+  updateIndicator();
+  setTimeout(() => m.classList.add('fade'), 2500);
+  setTimeout(() => m.remove(), 3500);
+}
+
+/* ---------------- Yer imleri ---------------- */
+
+function updateBookmark(v) {
+  v.el.classList.toggle('bookmarked', !!v.page.bookmark);
+}
+
+async function toggleBookmark(idx) {
+  const v = ed.views[idx];
+  v.page.bookmark = !v.page.bookmark;
+  updateBookmark(v);
+  ed.changed = true;
+  await saveNotebook();
+  refreshOverview();
+  ui.toast(v.page.bookmark ? `Sayfa ${idx + 1} yer imlerine eklendi` : 'Yer imi kaldırıldı');
 }
 
 /* ---------------- PDF olarak dışa aktarma ---------------- */
@@ -1686,6 +2069,7 @@ async function buildPdf() {
     }
     const strokes = ed.ink.get(page.id);
     if (!strokes?.length) continue;
+    await preloadImages(strokes);
     const png = await out.embedPng(await canvasBytes(renderInkLayer(page, strokes, 3), 'image/png'));
     drawOverlay(p, png, page, degrees);
   }

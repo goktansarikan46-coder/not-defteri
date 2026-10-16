@@ -2,9 +2,15 @@
 
 Tablette kalemle PDF üzerine not almak için kişisel bir web uygulaması (PWA).
 
-- PDF açıp üzerine kalem / fosforlu kalem ile yazma, silgi, geri al
-- PDF sayfalarının arasına boş sayfa ekleme, sayfa silme
-- Klasörler ve iç içe klasörler
+- PDF açıp üzerine kalem / fosforlu kalem ile yazma (basınca duyarlı, 8+6 kalınlık, favori kalemler)
+- Kalemi bekletince düz çizgi, daire, dikdörtgen, üçgene dönüşen şekiller
+- Silgi: tüm çizgi ya da kısmi; iki parmakla dokun = geri al, üç parmak = yinele
+- Kement: seç, taşı, büyüt, renk değiştir, çoğalt, kopyala-yapıştır, sil
+- Metin kutusu ve resim ekleme (galeri / kamera)
+- Sayfa şablonları (boş, çizgili, kareli, noktalı); araya sayfa ekleme, çoğaltma, silme
+- Tüm sayfalar ekranı: sürükleyerek sıralama, yer imleri
+- PDF içinde ve kitaplıkta arama (Türkçe karakterlere duyarsız)
+- Renkli klasörler ve iç içe klasörler
 - Notlarla birlikte PDF olarak dışa aktarma
 - Tüm verinin tek dosyaya yedeklenmesi ve geri yüklenmesi
 

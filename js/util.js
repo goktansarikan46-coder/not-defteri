@@ -1,5 +1,5 @@
 // Her yayında bir artır (sw.js içindeki CACHE adıyla aynı sayı); kitaplığın köşesinde görünür.
-export const APP_VERSION = 8;
+export const APP_VERSION = 9;
 
 // crypto.randomUUID yalnızca HTTPS'te var; yerel ağdan (http) açıldığında da çalışsın diye kendi kimlik üreticimiz.
 export function uid() {
@@ -23,7 +23,16 @@ export function saveJSON(key, value) {
   }
 }
 
-export const collator = new Intl.Collator('tr', { numeric: true, sensitivity: 'base' });
+// Arama için: büyük/küçük harf ve Türkçe karakter farkını yok say (I/İ/ı/i, ü/u, ş/s, ç/c, ğ/g, ö/o).
+// Uzunluk korunur; böylece bulunan yerin konumu orijinal metinde de aynıdır.
+export const fold = (s) =>
+  s
+    .toLocaleLowerCase('tr')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ı/g, 'i');
+
+export const collator =new Intl.Collator('tr', { numeric: true, sensitivity: 'base' });
 
 export function formatDate(ts) {
   return new Date(ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });

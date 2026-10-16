@@ -4,7 +4,7 @@ import { icon } from './icons.js';
 import { openPdf, pageSizes, isPasswordError } from './pdf.js';
 import { renderThumb, THUMB_VERSION } from './render.js';
 import { createBackup, readBackup, restoreBackup, lastBackupTime, markBackedUp } from './backup.js';
-import { uid, collator, formatDate, escapeHtml, loadJSON, saveJSON, round2 } from './util.js';
+import { uid, collator, formatDate, escapeHtml, loadJSON, saveJSON, round2, fold } from './util.js';
 
 const A4 = { w: 595.28, h: 841.89 };
 export const FOLDER_COLORS = ['#3b82f6', '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#ec4899', '#64748b'];
@@ -24,6 +24,7 @@ export const currentFolder = () => current;
 // Klasöre girmek tarayıcı geçmişine bir adım ekler; böylece tabletin geri hareketi
 // (kenardan kaydırma) uygulamadan çıkmak yerine bir önceki klasöre döner.
 function enterFolder(id) {
+  $('lib-search').value = ''; // aramadan bir klasöre girince arama temizlenir
   setCurrent(id);
   history.pushState({ folder: id }, '');
   renderLibrary();
@@ -37,6 +38,12 @@ export function showFolder(id) {
 
 export function initLibrary({ onOpenNotebook }) {
   openNotebook = onOpenNotebook;
+  $('lib-search-icon').innerHTML = icon('search');
+  let searchTimer = 0;
+  $('lib-search').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderLibrary, 150);
+  });
   $('btn-backup').innerHTML = icon('archive') + '<span>Yedek</span>';
   $('btn-backup').addEventListener('click', backupMenu);
   $('backup-input').addEventListener('change', async (e) => {
@@ -74,11 +81,34 @@ export async function renderLibrary() {
     crumbs.append(crumb(f.name, f.id, i === path.length - 1));
   });
 
-  const subFolders = folders.filter((f) => f.parentId === current).sort((a, b) => collator.compare(a.name, b.name));
-  const nbs = notebooks.filter((n) => n.folderId === current).sort((a, b) => b.updatedAt - a.updatedAt);
+  // Arama kutusu doluysa: tüm klasörlerde adı eşleşen klasör ve defterleri göster.
+  const q = fold($('lib-search').value.trim());
+  const match = (name) => fold(name).includes(q);
+  const subFolders = (q ? folders.filter((f) => match(f.name)) : folders.filter((f) => f.parentId === current)).sort((a, b) =>
+    collator.compare(a.name, b.name),
+  );
+  const nbs = (q ? notebooks.filter((n) => match(n.title)) : notebooks.filter((n) => n.folderId === current)).sort(
+    (a, b) => b.updatedAt - a.updatedAt,
+  );
   renderBackupHint(notebooks.length);
   const grid = $('lib-grid');
   grid.innerHTML = '';
+  if (q) {
+    crumbs.innerHTML = '';
+    crumbs.append(Object.assign(document.createElement('span'), { className: 'crumb current', textContent: `Arama: "${$('lib-search').value.trim()}"` }));
+    if (!subFolders.length && !nbs.length) {
+      grid.innerHTML = `<div class="empty">${icon('search')}<p><b>Sonuç yok</b></p><p>Bu adla bir defter ya da klasör bulunamadı.</p></div>`;
+      return;
+    }
+    const where = (folderId) => {
+      const names = [];
+      for (let f = byId.get(folderId); f; f = byId.get(f.parentId)) names.unshift(f.name);
+      return names.length ? names.join(' › ') : 'Kitaplık';
+    };
+    for (const f of subFolders) grid.append(folderCard(f, null, folders, notebooks, where(f.parentId)));
+    for (const nb of nbs) grid.append(notebookCard(nb, folders, `${where(nb.folderId)} · ${nb.pages.length} sayfa`));
+    return;
+  }
   if (!subFolders.length && !nbs.length) {
     grid.innerHTML = `<div class="empty">${icon('folder')}<p><b>${current === 'root' ? 'Kitaplığın boş' : 'Bu klasör boş'}</b></p>
       <p>Sağ üstten <b>PDF aç</b> ile bir PDF ekle, <b>Boş defter</b> oluştur ya da notlarını ayırmak için <b>Yeni klasör</b> aç.</p></div>`;
@@ -145,8 +175,8 @@ function card(className, thumbHtml, name, sub) {
   return el;
 }
 
-function folderCard(f, count, folders, notebooks) {
-  const el = card('folder', icon('folder'), f.name, count ? `${count} öğe` : 'Boş');
+function folderCard(f, count, folders, notebooks, sub) {
+  const el = card('folder', icon('folder'), f.name, sub ?? (count ? `${count} öğe` : 'Boş'));
   el.style.setProperty('--fc', folderColor(f));
   el.addEventListener('click', (e) => {
     if (e.target.closest('.more')) return;
@@ -191,9 +221,9 @@ function folderCard(f, count, folders, notebooks) {
   return el;
 }
 
-function notebookCard(nb, folders) {
+function notebookCard(nb, folders, sub) {
   const thumb = nb.thumb ? `<img src="${nb.thumb}" alt="">` : icon('file');
-  const el = card('notebook', thumb, nb.title, `${nb.pages.length} sayfa · ${formatDate(nb.updatedAt)}`);
+  const el = card('notebook', thumb, nb.title, sub ?? `${nb.pages.length} sayfa · ${formatDate(nb.updatedAt)}`);
   el.dataset.id = nb.id;
   el.addEventListener('click', (e) => {
     if (e.target.closest('.more')) return;

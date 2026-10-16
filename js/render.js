@@ -1,9 +1,102 @@
 // Kalem izleri sayfa koordinatlarında (PDF noktası) saklanır: { tool, color, width, pts: [x, y, basınç, ...] }.
 // Böylece yakınlaştırma ya da çözünürlük ne olursa olsun aynı yere çizilirler.
 
+// Metin kutuları ve resimler de aynı listede, aynı biçimde tutulur; böylece kement, geri alma, kopyalama,
+// yedekleme onlarda da çalışır. pts = [solÜstX, solÜstY, 0.5, sağAltX, sağAltY, 0.5].
+//   metin: { tool: 'text', text, color, width: yazı boyu (pt), pts }
+//   resim: { tool: 'image', src: dataURL, width: 0, pts }
+export const isBox = (s) => s.tool === 'text' || s.tool === 'image';
+
 const widthAt = (s, pressure) => s.width * (0.45 + 0.9 * pressure);
 
+export const TEXT_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+export const TEXT_LINE = 1.3;
+
+// Metni kutu genişliğine göre satırlara böler (ekranda, küçük resimde ve PDF'te aynı sonuç).
+export function wrapText(ctx, text, maxW) {
+  const lines = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(/(\s+)/)) {
+      const next = line + word;
+      if (ctx.measureText(next).width <= maxW || !line.trim()) {
+        line = next;
+        // Tek kelime kutudan genişse harf harf böl.
+        while (ctx.measureText(line).width > maxW && line.length > 1) {
+          let cut = line.length - 1;
+          while (cut > 1 && ctx.measureText(line.slice(0, cut)).width > maxW) cut--;
+          lines.push(line.slice(0, cut));
+          line = line.slice(cut);
+        }
+      } else {
+        lines.push(line.trimEnd());
+        line = word.trimStart();
+      }
+    }
+    lines.push(line.trimEnd());
+  }
+  return lines;
+}
+
+let measureCtx = null;
+export function textHeight(text, size, maxW) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  measureCtx.font = `${size}px ${TEXT_FONT}`;
+  return Math.max(1, wrapText(measureCtx, text, maxW).length) * size * TEXT_LINE;
+}
+
+function drawText(ctx, s) {
+  const [x, y, , x2] = s.pts;
+  ctx.save();
+  ctx.font = `${s.width}px ${TEXT_FONT}`;
+  ctx.fillStyle = s.color;
+  ctx.textBaseline = 'top';
+  wrapText(ctx, s.text, x2 - x).forEach((line, i) => ctx.fillText(line, x, y + i * s.width * TEXT_LINE + s.width * 0.12));
+  ctx.restore();
+}
+
+// Resimler bir kez çözülüp önbellekte tutulur; yüklenince sayfa yeniden çizilsin diye haber verilir.
+const images = new Map();
+let onImageReady = null;
+export const setImageReadyHandler = (fn) => (onImageReady = fn);
+
+function imageFor(src) {
+  let img = images.get(src);
+  if (!img) {
+    img = new Image();
+    img.onload = () => onImageReady?.();
+    img.src = src;
+    images.set(src, img);
+  }
+  return img;
+}
+
+// Dışa aktarma / küçük resimden önce resimlerin yüklenmesini bekle; bozuk bir resim her şeyi kilitlemesin diye en fazla 4 sn.
+export async function preloadImages(strokes) {
+  const waits = strokes
+    .filter((s) => s.tool === 'image')
+    .map((s) => {
+      const img = imageFor(s.src);
+      if (img.complete && img.naturalWidth) return null;
+      return new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+    })
+    .filter(Boolean);
+  if (waits.length) await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 4000))]);
+}
+
+function drawImageItem(ctx, s) {
+  const img = imageFor(s.src);
+  if (!img.complete || !img.naturalWidth) return;
+  const [x, y, , x2, y2] = s.pts;
+  ctx.drawImage(img, x, y, x2 - x, y2 - y);
+}
+
 export function drawStroke(ctx, s) {
+  if (s.tool === 'text') return drawText(ctx, s);
+  if (s.tool === 'image') return drawImageItem(ctx, s);
   const p = s.pts;
   const n = p.length / 3;
   if (!n) return;
@@ -56,6 +149,7 @@ export function drawStrokes(ctx, strokes) {
 
 // Silgi için: nokta bir çizgiye r mesafeden yakın mı?
 export function hitStroke(s, x, y, r) {
+  if (isBox(s)) return false; // silgi metin ve resimlere dokunmaz (onlar kementle silinir)
   const p = s.pts;
   const rr = r + s.width / 2;
   const rr2 = rr * rr;
@@ -101,7 +195,7 @@ export function eraseFromStroke(s, x, y, r) {
 export function strokesBounds(strokes) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const s of strokes) {
-    const pad = s.width / 2;
+    const pad = isBox(s) ? 0 : s.width / 2;
     for (let i = 0; i < s.pts.length; i += 3) {
       x0 = Math.min(x0, s.pts[i] - pad);
       y0 = Math.min(y0, s.pts[i + 1] - pad);
@@ -127,6 +221,7 @@ export function transformStroke(s, { dx = 0, dy = 0, k = 1, ax = 0, ay = 0 }) {
 // Kement: çizginin noktalarının en az yarısı çokgenin içindeyse seçilir.
 export function strokeInPolygon(s, poly) {
   const p = s.pts;
+  if (isBox(s)) return pointInPolygon((p[0] + p[3]) / 2, (p[1] + p[4]) / 2, poly); // kutunun ortası içerideyse
   let inside = 0;
   for (let i = 0; i < p.length; i += 3) if (pointInPolygon(p[i], p[i + 1], poly)) inside++;
   return inside / (p.length / 3) >= 0.5;
@@ -227,6 +322,7 @@ export async function renderThumb(pdfDoc, page, strokes, width = THUMB_WIDTH) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
   if (page.kind === 'pdf' && pdfDoc) await renderPdfPage(pdfDoc, page, c);
+  if (strokes?.length) await preloadImages(strokes);
   const k = width / page.w;
   ctx.setTransform(k, 0, 0, k, 0, 0);
   if (hasTemplate(page)) drawTemplate(ctx, page);

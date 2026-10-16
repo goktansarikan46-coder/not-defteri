@@ -26,6 +26,8 @@ export async function pageSizes(doc) {
   return sizes;
 }
 
+export const pdfUtil = pdfjsLib.Util;
+
 export function isPasswordError(err) {
   return err?.name === 'PasswordException';
 }
