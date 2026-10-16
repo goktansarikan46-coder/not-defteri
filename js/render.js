@@ -66,6 +66,81 @@ export function hitStroke(s, x, y, r) {
   return false;
 }
 
+// Kısmi silgi: çizginin silginin altında kalan kısmını çıkarır, kalan parçaları yeni çizgiler olarak döndürür.
+// Çizgiye dokunmuyorsa null döner. Çizgi nesneleri hiç değiştirilmez (geri alma bunlara dayanıyor).
+export function eraseFromStroke(s, x, y, r) {
+  if (!hitStroke(s, x, y, r)) return null;
+  const rr = r + s.width / 2;
+  const rr2 = rr * rr;
+  const step = Math.max(0.4, r / 3);
+  const p = s.pts;
+  const pieces = [];
+  let run = [];
+  const flush = () => {
+    if (run.length >= 6) pieces.push({ ...s, pts: run });
+    run = [];
+  };
+  const visit = (px, py, pr) => {
+    if ((px - x) ** 2 + (py - y) ** 2 <= rr2) flush();
+    else run.push(Math.round(px * 100) / 100, Math.round(py * 100) / 100, pr);
+  };
+  visit(p[0], p[1], p[2]);
+  for (let i = 3; i < p.length; i += 3) {
+    // Seyrek noktalar arasını doldur ki silgi iki nokta arasından "kaçmasın".
+    const [ax, ay, ap, bx, by, bp] = [p[i - 3], p[i - 2], p[i - 1], p[i], p[i + 1], p[i + 2]];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / step));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      visit(ax + (bx - ax) * t, ay + (by - ay) * t, ap + (bp - ap) * t);
+    }
+  }
+  flush();
+  return pieces;
+}
+
+export function strokesBounds(strokes) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of strokes) {
+    const pad = s.width / 2;
+    for (let i = 0; i < s.pts.length; i += 3) {
+      x0 = Math.min(x0, s.pts[i] - pad);
+      y0 = Math.min(y0, s.pts[i + 1] - pad);
+      x1 = Math.max(x1, s.pts[i] + pad);
+      y1 = Math.max(y1, s.pts[i + 1] + pad);
+    }
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+// Çizgiyi kaydırır / ölçekler: (x, y) → (ox + (x - ax) * k + dx, ...). Yeni nesne döndürür.
+export function transformStroke(s, { dx = 0, dy = 0, k = 1, ax = 0, ay = 0 }) {
+  const p = s.pts;
+  const pts = new Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    pts[i] = Math.round((ax + (p[i] - ax) * k + dx) * 100) / 100;
+    pts[i + 1] = Math.round((ay + (p[i + 1] - ay) * k + dy) * 100) / 100;
+    pts[i + 2] = p[i + 2];
+  }
+  return { ...s, pts, width: Math.round(s.width * k * 100) / 100 };
+}
+
+// Kement: çizginin noktalarının en az yarısı çokgenin içindeyse seçilir.
+export function strokeInPolygon(s, poly) {
+  const p = s.pts;
+  let inside = 0;
+  for (let i = 0; i < p.length; i += 3) if (pointInPolygon(p[i], p[i + 1], poly)) inside++;
+  return inside / (p.length / 3) >= 0.5;
+}
+
+function pointInPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+    const [xi, yi, xj, yj] = [poly[i], poly[i + 1], poly[j], poly[j + 1]];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 function segDist2(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
   const len2 = dx * dx + dy * dy;

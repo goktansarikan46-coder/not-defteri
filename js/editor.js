@@ -14,7 +14,12 @@ import {
   drawTemplate,
   templateShapes,
   hasTemplate,
+  eraseFromStroke,
+  strokesBounds,
+  transformStroke,
+  strokeInPolygon,
 } from './render.js';
+import { recognizeShape } from './shapes.js';
 import { uid, loadJSON, saveJSON, round2, clamp } from './util.js';
 
 const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
@@ -26,7 +31,9 @@ const SIZES = {
 };
 const OLD_PEN_WIDTHS = [0.9, 1.6, 2.8];
 const OLD_HL_WIDTHS = [8, 14, 22];
-const ERASER_RADIUS_PX = 10;
+const ERASER_SIZES = [6, 12, 22]; // silgi yarıçapı, ekran pikseli
+const SHAPE_HOLD_MS = 550; // kalemi bu kadar bekletince çizgi düzgün şekle dönüşür
+const MAX_FAVORITES = 8;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 5;
 const MAX_CANVAS_AREA = 12_000_000; // tablet belleğini korumak için sayfa başına üst sınır
@@ -37,6 +44,10 @@ const settings = loadJSON('nd-tools', { tool: 'pen', penColor: 0, hlColor: 0, pe
 // Eski sürümde kalınlık 3 seçenekten birinin sırasıydı; o seçimi gerçek kalınlığa çevir.
 settings.penSize ??= OLD_PEN_WIDTHS[settings.penWidth] ?? 1.6;
 settings.hlSize ??= OLD_HL_WIDTHS[settings.hlWidth] ?? 14;
+settings.eraserMode ??= 'stroke'; // 'stroke': dokunulan çizginin tamamı, 'partial': yalnızca üzerinden geçilen kısım
+settings.eraserSize ??= 1;
+settings.favorites ??= [];
+const eraserRadius = () => ERASER_SIZES[settings.eraserSize] ?? ERASER_SIZES[1];
 const saveSettings = () => saveJSON('nd-tools', settings);
 
 const $ = (id) => document.getElementById(id);
@@ -98,6 +109,8 @@ export async function closeEditor() {
   if (!ed) return;
   const e = ed;
   if (sizePop) closeSizePop();
+  if (favPop) closeFavPop();
+  clearSelection();
   closeOverlays();
   active = null;
   touches.clear();
@@ -219,12 +232,13 @@ class PageView {
     return ctx;
   }
 
-  drawInk() {
+  // exclude: o an taşınan (canlı katmanda çizilen) çizgiler
+  drawInk(exclude) {
     if (!this.ink.width) return;
     const ctx = this.ink.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.ink.width, this.ink.height);
-    drawStrokes(this.inkContext(), this.strokes);
+    drawStrokes(this.inkContext(), exclude ? this.strokes.filter((s) => !exclude.has(s)) : this.strokes);
   }
 
   addStroke(s) {
@@ -326,6 +340,7 @@ async function pageMenu() {
   const action = await ui.actionSheet({
     title: `Sayfa ${idx + 1} / ${ed.views.length}`,
     actions: [
+      ...(clipboard?.length ? [{ id: 'paste', label: 'Yapıştır (kopyalanan yazı)' }] : []),
       { id: 'add', label: 'Sayfa ekle…' },
       { id: 'duplicate', label: 'Bu sayfayı çoğalt' },
       { id: 'overview', label: 'Tüm sayfalar' },
@@ -333,7 +348,8 @@ async function pageMenu() {
     ],
   });
   if (!ed) return;
-  if (action === 'add') addPageDialog(idx);
+  if (action === 'paste') pasteClipboard(idx);
+  else if (action === 'add') addPageDialog(idx);
   else if (action === 'duplicate') duplicatePage(idx);
   else if (action === 'overview') openOverview();
   else if (action === 'delete') deletePage(ed.views[idx]);
@@ -418,6 +434,7 @@ async function deletePage(v) {
       ' Bu işlem geri alınamaz.',
   });
   if (!ok || !ed) return;
+  if (selection?.v === v) clearSelection();
   const id = v.page.id;
   ed.io.unobserve(v.el);
   v.release();
@@ -641,10 +658,13 @@ function buildToolbar() {
     <span class="sep"></span>
     <button class="icon tool" data-tool="pen" title="Kalem">${icon('pen')}</button>
     <button class="icon tool" data-tool="hl" title="Fosforlu kalem">${icon('highlighter')}</button>
-    <button class="icon tool" data-tool="eraser" title="Silgi (dokunduğun çizgiyi siler)">${icon('eraser')}</button>
+    <button class="icon tool" data-tool="eraser" title="Silgi">${icon('eraser')}</button>
+    <button class="icon tool" data-tool="lasso" title="Kement: çevresini çizerek seç, taşı, büyüt, sil">${icon('lasso')}</button>
     <span class="sep"></span>
     <div class="group" id="tb-colors"></div>
     <div class="group" id="tb-widths"></div>
+    <button class="icon" id="tb-fav" title="Favori kalemler">${icon('star')}</button>
+    <span class="lasso-hint" id="tb-lasso-hint">Seçmek istediğin yazının çevresini çiz</span>
     <span class="sep"></span>
     <button class="icon" id="tb-undo" title="Geri al">${icon('undo')}</button>
     <button class="icon" id="tb-redo" title="Yinele">${icon('redo')}</button>
@@ -667,11 +687,13 @@ function buildToolbar() {
   };
   tb.querySelectorAll('.tool').forEach((b) => {
     b.onclick = () => {
+      if (settings.tool !== b.dataset.tool) clearSelection();
       settings.tool = b.dataset.tool;
       saveSettings();
       updateToolbar();
     };
   });
+  $('tb-fav').onclick = () => (favPop ? closeFavPop() : openFavPop($('tb-fav')));
   $('tb-undo').onclick = undo;
   $('tb-redo').onclick = redo;
   $('tb-zoom-in').onclick = () => zoomBy(1.25);
@@ -694,8 +716,37 @@ function updateToolbar() {
   const widths = $('tb-widths');
   colors.innerHTML = '';
   widths.innerHTML = '';
-  colors.hidden = widths.hidden = tool === 'eraser';
-  if (tool !== 'eraser') {
+  colors.hidden = widths.hidden = tool === 'lasso';
+  $('tb-fav').hidden = tool === 'eraser' || tool === 'lasso';
+  $('tb-fav').classList.toggle('active', !!favPop);
+  $('tb-lasso-hint').hidden = tool !== 'lasso' || !!selection;
+  if (tool === 'eraser') {
+    // Silgi: "tüm çizgi" ya da "kısmi" ve üç boy
+    for (const [mode, label] of [['stroke', 'Tüm çizgi'], ['partial', 'Kısmi']]) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (settings.eraserMode === mode ? ' active' : '');
+      b.textContent = label;
+      b.title = mode === 'stroke' ? 'Dokunduğun çizginin tamamını siler' : 'Yalnızca üzerinden geçtiğin kısmı siler';
+      b.onclick = () => {
+        settings.eraserMode = mode;
+        saveSettings();
+        updateToolbar();
+      };
+      colors.append(b);
+    }
+    ERASER_SIZES.forEach((r, i) => {
+      const b = document.createElement('button');
+      b.className = 'wbtn' + (settings.eraserSize === i ? ' active' : '');
+      b.title = ['Küçük', 'Orta', 'Büyük'][i] + ' silgi';
+      b.innerHTML = `<span class="eraser-dot" style="width:${6 + i * 6}px;height:${6 + i * 6}px"></span>`;
+      b.onclick = () => {
+        settings.eraserSize = i;
+        saveSettings();
+        updateToolbar();
+      };
+      widths.append(b);
+    });
+  } else if (tool !== 'lasso') {
     const isHl = tool === 'hl';
     const palette = isHl ? HL_COLORS : PEN_COLORS;
     const colorKey = isHl ? 'hlColor' : 'penColor';
@@ -719,7 +770,8 @@ function updateToolbar() {
     b.onclick = () => (sizePop ? closeSizePop() : openSizePop(b));
     widths.append(b);
   }
-  if (sizePop && (tool === 'eraser' || sizePop.dataset.tool !== tool)) closeSizePop();
+  if (favPop && (tool === 'eraser' || tool === 'lasso')) closeFavPop();
+  if (sizePop && (tool === 'eraser' || tool === 'lasso' || sizePop.dataset.tool !== tool)) closeSizePop();
   else renderSizePop(); // renk değiştiyse önizleme de güncellensin
   $('tb-finger').classList.toggle('active', settings.fingerDraw);
   $('tb-undo').disabled = !ed?.undo.length;
@@ -846,6 +898,9 @@ function applyOp(op, reverse) {
     // Silinenler kaydedildikleri sıranın tersiyle eski yerlerine döner.
     if (reverse) for (let i = op.items.length - 1; i >= 0; i--) strokes.splice(op.items[i].index, 0, op.items[i].stroke);
     else for (const it of op.items) strokes.splice(strokes.indexOf(it.stroke), 1);
+  } else if (op.type === 'snapshot') {
+    // Kısmi silgi, taşıma, boyutlandırma, renk, çoğaltma: sayfanın önceki / sonraki hali
+    strokes.splice(0, strokes.length, ...(reverse ? op.before : op.after));
   }
   viewById(op.pageId)?.drawInk();
   markDirty(op.pageId);
@@ -854,6 +909,7 @@ function applyOp(op, reverse) {
 function undo() {
   const op = ed?.undo.pop();
   if (!op) return;
+  clearSelection();
   applyOp(op, true);
   ed.redo.push(op);
   updateToolbar();
@@ -862,6 +918,7 @@ function undo() {
 function redo() {
   const op = ed?.redo.pop();
   if (!op) return;
+  clearSelection();
   applyOp(op, false);
   ed.undo.push(op);
   updateToolbar();
@@ -911,7 +968,9 @@ function bindInput() {
 function onDown(e) {
   if (!ed || e.target.closest('button')) return;
   const now = performance.now();
-  if (e.pointerType === 'touch' && !settings.fingerDraw) {
+  // Seçimi parmakla da sürükleyebilmek için: seçim kutusuna dokunuş kaydırma sayılmaz.
+  const onSelection = selection && e.target.closest('.sel-box');
+  if (e.pointerType === 'touch' && !settings.fingerDraw && !onSelection) {
     if (active || now - lastPen < PALM_GUARD_MS) return;
     startTouch(e);
     return;
@@ -925,37 +984,65 @@ function onDown(e) {
   // Kalem değdiyse avuç içinden gelen kaydırmayı bırak.
   touches.clear();
   pinch = null;
+  tap = null;
   stopInertia();
   capture(e.pointerId);
   const v = pageEl._view;
   const rect = pageEl.getBoundingClientRect();
   const penButton = e.pointerType === 'pen' && (e.button === 5 || e.button === 2 || (e.buttons & 32) || (e.buttons & 2));
-  const eraser = settings.tool === 'eraser' || !!penButton;
-  active = { id: e.pointerId, v, rect, k: v.page.w / rect.width, eraser, erased: [], stroke: null, cursor: null };
-  attachLive(v);
-  if (eraser) {
+  const base = { id: e.pointerId, v, rect, k: v.page.w / rect.width, cursor: null };
+  const at = pagePoint(e, base);
+
+  if (onSelection && selection.v === v) {
+    startSelectionDrag(e, base, at, e.target.closest('.sel-handle') ? 'resize' : 'move');
+    return;
+  }
+  if (settings.tool === 'lasso' && !penButton) {
+    clearSelection();
+    active = { ...base, kind: 'lasso', poly: [at.x, at.y] };
+    attachLive(v);
+    requestLive();
+    return;
+  }
+  clearSelection();
+  if (settings.tool === 'eraser' || penButton) {
+    active = { ...base, kind: 'erase', erased: [], before: v.strokes.slice(), changed: false };
+    attachLive(v);
     eraseAt(e);
   } else {
     const hl = settings.tool === 'hl';
-    active.stroke = {
-      tool: hl ? 'hl' : 'pen',
-      color: hl ? HL_COLORS[settings.hlColor] : PEN_COLORS[settings.penColor],
-      width: hl ? settings.hlSize : settings.penSize,
-      pts: [],
+    active = {
+      ...base,
+      kind: 'ink',
+      stroke: { tool: hl ? 'hl' : 'pen', color: currentColor(settings.tool), width: hl ? settings.hlSize : settings.penSize, pts: [] },
+      hold: null,
+      snapped: false,
     };
+    attachLive(v);
     addPoint(e, true);
+    holdCheck(e);
   }
   requestLive();
+}
+
+function pagePoint(ev, a = active) {
+  return { x: (ev.clientX - a.rect.left) * a.k, y: (ev.clientY - a.rect.top) * a.k };
 }
 
 function onMove(e) {
   if (e.pointerType === 'pen') lastPen = performance.now();
   if (active && e.pointerId === active.id) {
+    if (active.kind === 'move' || active.kind === 'resize') {
+      dragSelection(e);
+      return;
+    }
     const coalesced = e.getCoalescedEvents?.() || [];
     for (const ev of coalesced.length ? coalesced : [e]) {
-      if (active.eraser) eraseAt(ev);
-      else addPoint(ev, false);
+      if (active.kind === 'erase') eraseAt(ev);
+      else if (active.kind === 'lasso') lassoPoint(ev);
+      else if (!active.snapped) addPoint(ev, false);
     }
+    if (active.kind === 'ink') holdCheck(e);
     requestLive();
     return;
   }
@@ -964,7 +1051,7 @@ function onMove(e) {
 
 function onUp(e) {
   if (active && e.pointerId === active.id) {
-    finishStroke();
+    finishActive();
     return;
   }
   if (touches.has(e.pointerId)) endTouch(e);
@@ -972,8 +1059,7 @@ function onUp(e) {
 
 function addPoint(ev, force) {
   const a = active;
-  const x = (ev.clientX - a.rect.left) * a.k;
-  const y = (ev.clientY - a.rect.top) * a.k;
+  const { x, y } = pagePoint(ev);
   let p = ev.pointerType === 'pen' ? ev.pressure : 0.5;
   if (!(p > 0)) p = 0.3;
   const pts = a.stroke.pts;
@@ -986,38 +1072,88 @@ function addPoint(ev, force) {
   pts.push(round2(x), round2(y), round2(p));
 }
 
+// Kalem bir yerde bekletilirse (SHAPE_HOLD_MS) çizgiyi düzgün şekle çevir.
+function holdCheck(ev) {
+  const a = active;
+  if (!a || a.kind !== 'ink' || a.snapped) return;
+  const h = a.hold;
+  if (h && Math.hypot(ev.clientX - h.x, ev.clientY - h.y) <= 4) return;
+  clearTimeout(h?.timer);
+  a.hold = { x: ev.clientX, y: ev.clientY, timer: setTimeout(() => trySnap(a), SHAPE_HOLD_MS) };
+}
+
+function trySnap(a) {
+  if (active !== a || a.snapped || a.stroke.pts.length < 15) return;
+  const pts = recognizeShape(a.stroke.pts);
+  if (!pts) return;
+  a.stroke.pts = pts;
+  a.snapped = true;
+  navigator.vibrate?.(12);
+  requestLive();
+}
+
 function eraseAt(ev) {
   const a = active;
-  const x = (ev.clientX - a.rect.left) * a.k;
-  const y = (ev.clientY - a.rect.top) * a.k;
+  const { x, y } = pagePoint(ev);
+  const r = eraserRadius() * a.k;
+  // Silgi hızlı hareket ettiğinde iki olay arasında kalan yeri de tara (aradaki çizgiler atlanmasın).
+  const prev = a.cursor;
   a.cursor = { x, y };
+  if (prev) {
+    const steps = Math.floor(Math.hypot(x - prev.x, y - prev.y) / (r / 2));
+    for (let i = 1; i < steps; i++) eraseAtPoint(a, prev.x + ((x - prev.x) * i) / steps, prev.y + ((y - prev.y) * i) / steps, r);
+  }
+  eraseAtPoint(a, x, y, r);
+}
+
+function eraseAtPoint(a, x, y, r) {
   const strokes = a.v.strokes;
   let changed = false;
   for (let i = strokes.length - 1; i >= 0; i--) {
-    if (hitStroke(strokes[i], x, y, ERASER_RADIUS_PX * a.k)) {
+    if (settings.eraserMode === 'partial') {
+      const pieces = eraseFromStroke(strokes[i], x, y, r);
+      if (pieces) {
+        strokes.splice(i, 1, ...pieces);
+        changed = true;
+      }
+    } else if (hitStroke(strokes[i], x, y, r)) {
       a.erased.push({ stroke: strokes[i], index: i });
       strokes.splice(i, 1);
       changed = true;
     }
   }
   if (changed) {
+    a.changed = true;
     a.v.drawInk();
     markDirty(a.v.page.id);
   }
 }
 
-function finishStroke() {
+function lassoPoint(ev) {
+  const { x, y } = pagePoint(ev);
+  const poly = active.poly;
+  const n = poly.length;
+  if (Math.hypot(x - poly[n - 2], y - poly[n - 1]) > 1.5) poly.push(round2(x), round2(y));
+}
+
+function finishActive() {
   const a = active;
   active = null;
+  clearTimeout(a.hold?.timer);
   liveCanvas.remove();
   const pageId = a.v.page.id;
-  if (a.stroke?.pts.length) {
+  if (a.kind === 'ink' && a.stroke.pts.length) {
     a.v.strokes.push(a.stroke);
     a.v.addStroke(a.stroke);
     pushUndo({ type: 'add', pageId, stroke: a.stroke });
     markDirty(pageId);
-  } else if (a.erased.length) {
-    pushUndo({ type: 'erase', pageId, items: a.erased });
+  } else if (a.kind === 'erase' && a.changed) {
+    if (settings.eraserMode === 'partial') pushUndo({ type: 'snapshot', pageId, before: a.before, after: a.v.strokes.slice() });
+    else pushUndo({ type: 'erase', pageId, items: a.erased });
+  } else if (a.kind === 'lasso') {
+    finishLasso(a);
+  } else if (a.kind === 'move' || a.kind === 'resize') {
+    finishSelectionDrag(a);
   }
 }
 
@@ -1044,16 +1180,309 @@ function drawLive() {
   ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
   const k = liveCanvas.width / active.v.page.w;
   ctx.setTransform(k, 0, 0, k, 0, 0);
-  if (active.stroke) drawStroke(ctx, active.stroke);
-  if (active.eraser && active.cursor) {
+  if (active.kind === 'ink') drawStroke(ctx, active.stroke);
+  if (active.kind === 'erase' && active.cursor) {
     ctx.beginPath();
-    ctx.arc(active.cursor.x, active.cursor.y, ERASER_RADIUS_PX * active.k, 0, Math.PI * 2);
+    ctx.arc(active.cursor.x, active.cursor.y, eraserRadius() * active.k, 0, Math.PI * 2);
     ctx.lineWidth = active.k;
     ctx.strokeStyle = 'rgba(100,116,139,.9)';
     ctx.fillStyle = 'rgba(148,163,184,.15)';
     ctx.fill();
     ctx.stroke();
   }
+  if (active.kind === 'lasso') {
+    const p = active.poly;
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]);
+    for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(37,99,235,.06)';
+    ctx.fill();
+    ctx.setLineDash([4 * active.k, 3 * active.k]);
+    ctx.lineWidth = 1.4 * active.k;
+    ctx.strokeStyle = '#2563eb';
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (active.kind === 'move' || active.kind === 'resize') drawStrokes(ctx, active.preview);
+}
+
+/* ---------------- Kement: seçim, taşıma, boyutlandırma ---------------- */
+
+let selection = null; // { v, strokes: [], box, el, bar }
+let clipboard = null; // kopyalanan çizgiler (başka sayfaya yapıştırmak için)
+
+function finishLasso(a) {
+  if (a.poly.length < 6) return;
+  const picked = a.v.strokes.filter((s) => strokeInPolygon(s, a.poly));
+  if (!picked.length) {
+    ui.toast('Seçim alanında yazı yok');
+    return;
+  }
+  selectStrokes(a.v, picked);
+}
+
+function selectStrokes(v, strokes) {
+  clearSelection();
+  selection = { v, strokes, box: strokesBounds(strokes), el: null, bar: null };
+  renderSelection();
+  updateToolbar();
+}
+
+function clearSelection() {
+  if (!selection) return;
+  selection.el?.remove();
+  selection.bar?.remove();
+  selection = null;
+  if (ed) updateToolbar();
+}
+
+// Seçim kutusu sayfanın içine yüzde ile yerleştirilir: yakınlaştırınca kendiliğinden ölçeklenir.
+function renderSelection(box = selection.box) {
+  const { v } = selection;
+  const pct = (val, total) => (val / total) * 100 + '%';
+  const pad = 4;
+  if (!selection.el) {
+    selection.el = document.createElement('div');
+    selection.el.className = 'sel-box';
+    selection.el.innerHTML = '<span class="sel-handle" title="Sürükleyerek büyüt / küçült"></span>';
+    selection.bar = document.createElement('div');
+    selection.bar.className = 'sel-bar';
+    selection.bar.innerHTML = `
+      <button data-a="color" title="Rengini değiştir">${icon('palette')}<span>Renk</span></button>
+      <button data-a="copy" title="Kopyala (başka sayfaya yapıştırmak için)">${icon('copy')}<span>Kopyala</span></button>
+      <button data-a="dup" title="Çoğalt">${icon('plus')}<span>Çoğalt</span></button>
+      <button data-a="delete" class="danger" title="Sil">${icon('trash')}<span>Sil</span></button>`;
+    selection.bar.addEventListener('click', onSelectionAction);
+    v.el.append(selection.el, selection.bar);
+  }
+  Object.assign(selection.el.style, {
+    left: pct(box.x - pad, v.page.w),
+    top: pct(box.y - pad, v.page.h),
+    width: pct(box.w + pad * 2, v.page.w),
+    height: pct(box.h + pad * 2, v.page.h),
+  });
+  const above = box.y - pad > 60;
+  selection.bar.classList.toggle('below', !above);
+  Object.assign(selection.bar.style, {
+    left: pct(box.x + box.w / 2, v.page.w),
+    top: above ? pct(box.y - pad, v.page.h) : pct(box.y + box.h + pad, v.page.h),
+  });
+}
+
+function startSelectionDrag(e, base, at, kind) {
+  const s = selection;
+  active = { ...base, kind, start: at, preview: s.strokes, box: s.box, t: null };
+  // Taşınırken seçili çizgiler sayfadan gizlenip canlı katmanda çizilir.
+  s.v.drawInk(new Set(s.strokes));
+  attachLive(s.v);
+  s.bar.hidden = true;
+  requestLive();
+}
+
+function selectionTransform(a, at) {
+  const b = a.box;
+  if (a.kind === 'move') return { dx: at.x - a.start.x, dy: at.y - a.start.y };
+  // Sağ alt köşeden tek oranla (en-boy oranı korunarak) büyüt / küçült; sol üst köşe sabit.
+  const k = clamp((at.x - b.x + (at.y - b.y)) / (b.w + b.h || 1), 0.15, 8);
+  return { k, ax: b.x, ay: b.y };
+}
+
+function dragSelection(e) {
+  const a = active;
+  const t = selectionTransform(a, pagePoint(e));
+  a.t = t;
+  a.preview = selection.strokes.map((s) => transformStroke(s, t));
+  const b = a.box;
+  renderSelection(t.k ? { x: b.x, y: b.y, w: b.w * t.k, h: b.h * t.k } : { x: b.x + t.dx, y: b.y + t.dy, w: b.w, h: b.h });
+  requestLive();
+}
+
+function finishSelectionDrag(a) {
+  const s = selection;
+  s.bar.hidden = false;
+  const moved = a.t && (a.kind === 'resize' ? Math.abs(a.t.k - 1) > 0.005 : Math.hypot(a.t.dx, a.t.dy) >= 0.5);
+  if (!moved) {
+    s.v.drawInk();
+    renderSelection();
+    return;
+  }
+  replaceStrokes(s.v, s.strokes, a.preview);
+  selectStrokes(s.v, a.preview);
+}
+
+// Çizgileri yenileriyle (aynı sırada; null = sil) değiştirir ve tek adımda geri alınabilir yapar.
+function replaceStrokes(v, oldOnes, newOnes) {
+  const strokes = v.strokes;
+  const before = strokes.slice();
+  const map = new Map(oldOnes.map((s, i) => [s, newOnes[i]]));
+  const after = [];
+  for (const s of strokes) {
+    if (!map.has(s)) after.push(s);
+    else if (map.get(s)) after.push(map.get(s));
+  }
+  strokes.splice(0, strokes.length, ...after);
+  pushUndo({ type: 'snapshot', pageId: v.page.id, before, after: after.slice() });
+  v.drawInk();
+  markDirty(v.page.id);
+}
+
+async function onSelectionAction(e) {
+  const btn = e.target.closest('button');
+  if (!btn || !selection) return;
+  const { v, strokes } = selection;
+  const action = btn.dataset.a;
+  if (action === 'delete') {
+    replaceStrokes(
+      v,
+      strokes,
+      strokes.map(() => null),
+    );
+    clearSelection();
+    ui.toast('Silindi');
+  } else if (action === 'copy') {
+    clipboard = structuredClone(strokes);
+    ui.toast('Kopyalandı. Başka sayfada ⋮ menüsünden "Yapıştır"ı seç.');
+  } else if (action === 'dup') {
+    addStrokes(
+      v,
+      strokes.map((s) => transformStroke(s, { dx: 18, dy: 18 })),
+    );
+  } else if (action === 'color') {
+    const color = await pickSelectionColor(btn);
+    if (!color || !selection) return;
+    const recolored = strokes.map((s) => ({ ...s, color }));
+    replaceStrokes(v, strokes, recolored);
+    selectStrokes(v, recolored);
+  }
+}
+
+function addStrokes(v, newOnes) {
+  const strokes = v.strokes;
+  const before = strokes.slice();
+  strokes.push(...newOnes);
+  pushUndo({ type: 'snapshot', pageId: v.page.id, before, after: strokes.slice() });
+  v.drawInk();
+  markDirty(v.page.id);
+  if (settings.tool !== 'lasso') {
+    settings.tool = 'lasso';
+    saveSettings();
+  }
+  selectStrokes(v, newOnes);
+}
+
+function pasteClipboard(idx) {
+  if (!clipboard?.length || !ed) return;
+  const v = ed.views[idx];
+  // Yapıştırılan yazı sayfanın dışına taşmasın.
+  const b = strokesBounds(clipboard);
+  const dx = clamp(0, -b.x + 8, v.page.w - b.x - b.w - 8);
+  const dy = clamp(0, -b.y + 8, v.page.h - b.y - b.h - 8);
+  addStrokes(
+    v,
+    clipboard.map((s) => transformStroke(s, { dx, dy })),
+  );
+  ui.toast('Yapıştırıldı');
+}
+
+function pickSelectionColor(anchor) {
+  return new Promise((resolve) => {
+    const pop = document.createElement('div');
+    pop.className = 'color-pop';
+    for (const c of [...PEN_COLORS, ...HL_COLORS]) {
+      const b = document.createElement('button');
+      b.className = 'swatch';
+      b.style.setProperty('--c', c);
+      b.onclick = () => done(c);
+      pop.append(b);
+    }
+    document.body.append(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = clamp(r.left, 8, window.innerWidth - pop.offsetWidth - 8) + 'px';
+    pop.style.top = r.bottom + 6 + 'px';
+    const outside = (ev) => {
+      if (!pop.contains(ev.target)) done(null);
+    };
+    const done = (c) => {
+      document.removeEventListener('pointerdown', outside, true);
+      pop.remove();
+      resolve(c);
+    };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+  });
+}
+
+/* ---------------- Favori kalemler ---------------- */
+
+let favPop = null;
+
+const favKey = (f) => `${f.tool}|${f.color}|${f.size}`;
+
+function openFavPop(anchor) {
+  favPop = document.createElement('div');
+  favPop.className = 'fav-pop';
+  document.body.append(favPop);
+  renderFavPop();
+  const r = anchor.getBoundingClientRect();
+  favPop.style.left = clamp(r.left + r.width / 2 - favPop.offsetWidth / 2, 8, window.innerWidth - favPop.offsetWidth - 8) + 'px';
+  favPop.style.top = r.bottom + 8 + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', onOutsideFavPop, true), 0);
+  updateToolbar();
+}
+
+function renderFavPop() {
+  if (!favPop) return;
+  const cur = { tool: settings.tool, color: settings.tool === 'hl' ? settings.hlColor : settings.penColor, size: sizeOf(settings.tool) };
+  const favs = settings.favorites;
+  favPop.innerHTML = `<div class="size-head"><b>Favori kalemler</b></div><div class="fav-list"></div>
+    <button class="btn fav-add">${icon('plus')}<span>Şu anki kalemi ekle</span></button>`;
+  const list = favPop.querySelector('.fav-list');
+  if (!favs.length) list.innerHTML = '<p class="fav-empty">Sık kullandığın renk ve kalınlığı buraya ekle, tek dokunuşla geç.</p>';
+  favs.forEach((f, i) => {
+    const color = (f.tool === 'hl' ? HL_COLORS : PEN_COLORS)[f.color];
+    const name = f.tool === 'hl' ? 'Fosforlu' : 'Kalem';
+    const item = document.createElement('div');
+    item.className = 'fav' + (favKey(f) === favKey(cur) ? ' active' : '');
+    item.innerHTML = `<button class="fav-use">${sizeDot(f.tool, f.size, color)}<span>${name} · ${fmtSize(f.size)}</span></button>
+      <button class="fav-del" title="Favorilerden çıkar">${icon('close')}</button>`;
+    item.querySelector('.fav-use').onclick = () => {
+      settings.tool = f.tool;
+      if (f.tool === 'hl') {
+        settings.hlColor = f.color;
+        settings.hlSize = f.size;
+      } else {
+        settings.penColor = f.color;
+        settings.penSize = f.size;
+      }
+      saveSettings();
+      closeFavPop();
+    };
+    item.querySelector('.fav-del').onclick = () => {
+      settings.favorites.splice(i, 1);
+      saveSettings();
+      renderFavPop();
+    };
+    list.append(item);
+  });
+  const add = favPop.querySelector('.fav-add');
+  add.disabled = favs.some((f) => favKey(f) === favKey(cur)) || favs.length >= MAX_FAVORITES;
+  add.onclick = () => {
+    settings.favorites.push(cur);
+    saveSettings();
+    renderFavPop();
+  };
+}
+
+function onOutsideFavPop(e) {
+  if (!favPop || favPop.contains(e.target) || e.target.closest?.('#tb-fav')) return;
+  closeFavPop();
+}
+
+function closeFavPop() {
+  document.removeEventListener('pointerdown', onOutsideFavPop, true);
+  favPop?.remove();
+  favPop = null;
+  updateToolbar();
 }
 
 // Parmak hareketleri tarayıcıya bırakılmıyor (touch-action: none), çünkü kalemle yazarken sayfanın

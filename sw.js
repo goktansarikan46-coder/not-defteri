@@ -1,7 +1,7 @@
 // Uygulama dosyalarını önbelleğe alır; tablet internete bağlı olmasa da uygulama açılır.
 // İnternet varsa her zaman sunucudaki en yeni dosya kullanılır (güncellemeler hemen gelir);
 // internet yoksa ya da sunucu birkaç saniye içinde cevap vermezse önbellekteki kopya açılır.
-const CACHE = 'not-defteri-v7';
+const CACHE = 'not-defteri-v8';
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',
@@ -16,6 +16,7 @@ const SHELL = [
   'js/library.js',
   'js/pdf.js',
   'js/render.js',
+  'js/shapes.js',
   'js/ui.js',
   'js/util.js',
   'vendor/pdf.min.mjs',

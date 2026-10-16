@@ -1,5 +1,5 @@
 // Her yayında bir artır (sw.js içindeki CACHE adıyla aynı sayı); kitaplığın köşesinde görünür.
-export const APP_VERSION = 7;
+export const APP_VERSION = 8;
 
 // crypto.randomUUID yalnızca HTTPS'te var; yerel ağdan (http) açıldığında da çalışsın diye kendi kimlik üreticimiz.
 export function uid() {

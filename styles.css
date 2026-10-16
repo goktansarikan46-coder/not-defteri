@@ -115,6 +115,65 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .backup-hint span { display: flex; align-items: center; gap: 8px; }
 .backup-hint .i { color: #d97706; flex: none; }
 
+/* Silgi seçenekleri */
+.chip {
+  height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: none;
+  font-size: 13px; margin-right: 4px; flex: none;
+}
+.chip.active { background: var(--accent-weak); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.wbtn { width: 38px; height: 38px; border: 0; border-radius: 10px; background: none; display: grid; place-items: center; flex: none; }
+.wbtn.active { background: var(--accent-weak); }
+.eraser-dot { display: block; border-radius: 50%; border: 1.5px solid var(--muted); }
+.wbtn.active .eraser-dot { border-color: var(--accent); }
+.lasso-hint { color: var(--muted); font-size: 13px; white-space: nowrap; padding: 0 6px; }
+.lasso-hint[hidden], #tb-fav[hidden] { display: none; }
+
+/* Kement seçimi */
+.sel-box {
+  position: absolute; z-index: 3; border: 1.5px dashed #2563eb; border-radius: 6px;
+  background: rgba(37, 99, 235, 0.05); cursor: move; touch-action: none;
+}
+.sel-handle {
+  position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; border: 2px solid #2563eb; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); cursor: nwse-resize;
+}
+.sel-handle::before { content: ''; position: absolute; inset: -12px; } /* parmakla da rahat tutulsun */
+.sel-bar {
+  position: absolute; z-index: 4; display: flex; gap: 2px; padding: 4px;
+  transform: translate(-50%, calc(-100% - 10px)); white-space: nowrap;
+  background: #111827; color: #fff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.sel-bar.below { transform: translate(-50%, 10px); }
+.sel-bar button {
+  display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px;
+  border: 0; border-radius: 8px; background: none; color: inherit; font-size: 13px;
+}
+.sel-bar button:hover { background: rgba(255, 255, 255, 0.12); }
+.sel-bar button.danger { color: #fca5a5; }
+.sel-bar .i { width: 18px; height: 18px; }
+.color-pop {
+  position: fixed; z-index: 95; display: grid; grid-template-columns: repeat(5, 34px); gap: 6px; padding: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+/* Favori kalemler */
+.fav-pop {
+  position: fixed; z-index: 90; width: 300px; padding: 14px 16px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+.fav-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.fav { display: flex; align-items: center; border-radius: 10px; }
+.fav.active { background: var(--accent-weak); }
+.fav-use { flex: 1; display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 10px; border: 0; background: none; text-align: left; }
+.fav-use .dot { flex: none; }
+.fav-del { width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); display: grid; place-items: center; }
+.fav-del .i { width: 16px; height: 16px; }
+.fav-empty { color: var(--muted); font-size: 13px; margin: 0; }
+.fav-add { width: 100%; justify-content: center; }
+.fav-add:disabled { opacity: 0.45; }
+.toolbar .icon#tb-fav.active { background: var(--accent-weak); color: var(--accent); }
+
 /* Şablon seçici */
 .modal.wide { width: min(560px, 100%); }
 .tpl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
