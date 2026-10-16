@@ -152,9 +152,31 @@ button { font: inherit; color: inherit; cursor: pointer; }
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent);
 }
 .swatch.active { box-shadow: inset 0 0 0 2px var(--accent); }
-.wbtn { width: 36px; height: 36px; border: 0; border-radius: 10px; background: none; display: grid; place-items: center; }
-.wbtn span { border-radius: 50%; display: block; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent); }
-.wbtn.active { background: var(--accent-weak); }
+.size-btn {
+  display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 12px 0 10px; flex: none;
+  border: 1px solid var(--line); border-radius: 12px; background: none; margin-left: 4px;
+}
+.size-btn .dot-box, .size-btn > .dot { flex: none; }
+.size-btn.active { background: var(--accent-weak); border-color: var(--accent); }
+.size-val { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 22px; text-align: left; }
+.dot { display: block; border-radius: 50%; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent); }
+.size-pop {
+  position: fixed; z-index: 90; width: 320px; padding: 14px 16px 12px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+.size-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.size-num { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.size-preview { display: block; width: 100%; height: 45px; border-radius: 10px; border: 1px solid var(--line); }
+.size-presets { display: flex; justify-content: space-between; gap: 4px; margin: 12px 0 6px; }
+.size-preset {
+  flex: 1; height: 44px; border: 0; border-radius: 10px; background: none;
+  display: grid; place-items: center; padding: 0;
+}
+.size-preset:hover { background: var(--bg); }
+.size-preset.active { background: var(--accent-weak); box-shadow: inset 0 0 0 2px var(--accent); }
+.size-range { width: 100%; accent-color: var(--accent); height: 32px; touch-action: pan-x; }
+.size-ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 
 .pages {
   flex: 1; overflow: auto; background: var(--desk); position: relative;

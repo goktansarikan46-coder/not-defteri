@@ -7,8 +7,13 @@ import { uid, loadJSON, saveJSON, round2, clamp } from './util.js';
 
 const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
 const HL_COLORS = ['#facc15', '#4ade80', '#f472b6', '#60a5fa', '#fb923c'];
-const PEN_WIDTHS = [0.9, 1.6, 2.8]; // PDF noktası
-const HL_WIDTHS = [8, 14, 22];
+// Kalınlıklar PDF noktası (pt) cinsinden. Hazır seçenekler + kaydırıcıyla ince ayar.
+const SIZES = {
+  pen: { presets: [0.5, 0.8, 1.2, 1.6, 2.2, 3, 4.5, 6], min: 0.3, max: 8, step: 0.1, label: 'Kalem kalınlığı' },
+  hl: { presets: [5, 8, 12, 16, 22, 30], min: 3, max: 40, step: 1, label: 'Fosforlu kalem kalınlığı' },
+};
+const OLD_PEN_WIDTHS = [0.9, 1.6, 2.8];
+const OLD_HL_WIDTHS = [8, 14, 22];
 const ERASER_RADIUS_PX = 10;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 5;
@@ -17,6 +22,9 @@ const PALM_GUARD_MS = 600; // kalem yakındayken parmak/avuç dokunuşları yok 
 const A4 = { w: 595.28, h: 841.89 };
 
 const settings = loadJSON('nd-tools', { tool: 'pen', penColor: 0, hlColor: 0, penWidth: 1, hlWidth: 1, fingerDraw: false });
+// Eski sürümde kalınlık 3 seçenekten birinin sırasıydı; o seçimi gerçek kalınlığa çevir.
+settings.penSize ??= OLD_PEN_WIDTHS[settings.penWidth] ?? 1.6;
+settings.hlSize ??= OLD_HL_WIDTHS[settings.hlWidth] ?? 14;
 const saveSettings = () => saveJSON('nd-tools', settings);
 
 const $ = (id) => document.getElementById(id);
@@ -77,6 +85,7 @@ export async function openEditor(id) {
 export async function closeEditor() {
   if (!ed) return;
   const e = ed;
+  if (sizePop) closeSizePop();
   active = null;
   touches.clear();
   stopInertia();
@@ -452,7 +461,6 @@ function updateToolbar() {
     const isHl = tool === 'hl';
     const palette = isHl ? HL_COLORS : PEN_COLORS;
     const colorKey = isHl ? 'hlColor' : 'penColor';
-    const widthKey = isHl ? 'hlWidth' : 'penWidth';
     palette.forEach((c, i) => {
       const b = document.createElement('button');
       b.className = 'swatch' + (settings[colorKey] === i ? ' active' : '');
@@ -465,23 +473,116 @@ function updateToolbar() {
       };
       colors.append(b);
     });
-    const dots = isHl ? [6, 10, 15] : [4, 7, 11];
-    dots.forEach((d, i) => {
-      const b = document.createElement('button');
-      b.className = 'wbtn' + (settings[widthKey] === i ? ' active' : '');
-      b.title = ['İnce', 'Orta', 'Kalın'][i];
-      b.innerHTML = `<span style="width:${d}px;height:${d}px;background:${palette[settings[colorKey]]}"></span>`;
-      b.onclick = () => {
-        settings[widthKey] = i;
-        saveSettings();
-        updateToolbar();
-      };
-      widths.append(b);
-    });
+    const b = document.createElement('button');
+    b.className = 'size-btn' + (sizePop ? ' active' : '');
+    b.id = 'tb-size';
+    b.title = 'Kalınlık';
+    b.innerHTML = sizeDot(tool, sizeOf(tool), palette[settings[colorKey]]) + `<span class="size-val">${fmtSize(sizeOf(tool))}</span>`;
+    b.onclick = () => (sizePop ? closeSizePop() : openSizePop(b));
+    widths.append(b);
   }
+  if (sizePop && (tool === 'eraser' || sizePop.dataset.tool !== tool)) closeSizePop();
+  else renderSizePop(); // renk değiştiyse önizleme de güncellensin
   $('tb-finger').classList.toggle('active', settings.fingerDraw);
   $('tb-undo').disabled = !ed?.undo.length;
   $('tb-redo').disabled = !ed?.redo.length;
+}
+
+/* ---------------- Kalınlık paneli ---------------- */
+
+let sizePop = null;
+const sizeOf = (tool) => (tool === 'hl' ? settings.hlSize : settings.penSize);
+const fmtSize = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1)).replace('.', ',');
+const currentColor = (tool) => (tool === 'hl' ? HL_COLORS[settings.hlColor] : PEN_COLORS[settings.penColor]);
+
+// Düğmedeki nokta, çizginin sayfadaki yaklaşık kalınlığını gösterir.
+function sizeDot(tool, size, color) {
+  const d = tool === 'hl' ? clamp(size * 0.7, 4, 24) : clamp(size * 2.6, 2, 22);
+  const shape = tool === 'hl' ? `width:${d * 0.7}px;height:${d}px;border-radius:2px;opacity:.6` : `width:${d}px;height:${d}px`;
+  return `<span class="dot" style="${shape};background:${color}"></span>`;
+}
+
+function setSize(tool, value) {
+  const spec = SIZES[tool];
+  value = Math.round(clamp(value, spec.min, spec.max) / spec.step) * spec.step;
+  value = Math.round(value * 10) / 10;
+  if (tool === 'hl') settings.hlSize = value;
+  else settings.penSize = value;
+  saveSettings();
+  updateToolbar();
+  renderSizePop();
+}
+
+function openSizePop(anchor) {
+  const tool = settings.tool;
+  sizePop = document.createElement('div');
+  sizePop.className = 'size-pop';
+  sizePop.dataset.tool = tool;
+  const spec = SIZES[tool];
+  sizePop.innerHTML = `<div class="size-head"><b>${spec.label}</b><span class="size-num"></span></div>
+    <canvas class="size-preview" width="560" height="90"></canvas>
+    <div class="size-presets"></div>
+    <input class="size-range" type="range" min="${spec.min}" max="${spec.max}" step="${spec.step}">
+    <div class="size-ends"><span>İnce</span><span>Kalın</span></div>`;
+  const presets = sizePop.querySelector('.size-presets');
+  for (const v of spec.presets) {
+    const b = document.createElement('button');
+    b.className = 'size-preset';
+    b.dataset.v = v;
+    b.title = fmtSize(v);
+    b.onclick = () => setSize(tool, v);
+    presets.append(b);
+  }
+  sizePop.querySelector('.size-range').addEventListener('input', (e) => setSize(tool, parseFloat(e.target.value)));
+  document.body.append(sizePop);
+  const r = anchor.getBoundingClientRect();
+  const w = sizePop.offsetWidth;
+  sizePop.style.left = clamp(r.left + r.width / 2 - w / 2, 8, window.innerWidth - w - 8) + 'px';
+  sizePop.style.top = r.bottom + 8 + 'px';
+  renderSizePop();
+  updateToolbar();
+  setTimeout(() => document.addEventListener('pointerdown', onOutsideSizePop, true), 0);
+}
+
+function renderSizePop() {
+  if (!sizePop) return;
+  const tool = sizePop.dataset.tool;
+  const size = sizeOf(tool);
+  const color = currentColor(tool);
+  sizePop.querySelector('.size-num').textContent = fmtSize(size);
+  sizePop.querySelector('.size-range').value = size;
+  sizePop.querySelectorAll('.size-preset').forEach((b) => {
+    const v = parseFloat(b.dataset.v);
+    b.classList.toggle('active', Math.abs(v - size) < 1e-6);
+    b.innerHTML = sizeDot(tool, v, color);
+  });
+  // Önizleme: sayfada normal yakınlaştırmada nasıl görüneceğine yakın bir dalga çizgisi.
+  const c = sizePop.querySelector('.size-preview');
+  const ctx = c.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  const k = 2.4; // önizleme ölçeği (piksel / pt)
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const pts = [];
+  for (let i = 0; i <= 60; i++) {
+    const x = 14 + i * 3.4;
+    pts.push(x, 19 + Math.sin(i / 6) * 9, 0.35 + 0.4 * Math.sin((i / 60) * Math.PI));
+  }
+  drawStroke(ctx, { tool, color, width: size, pts });
+}
+
+function onOutsideSizePop(e) {
+  if (!sizePop || sizePop.contains(e.target) || e.target.closest?.('#tb-size')) return;
+  closeSizePop();
+}
+
+function closeSizePop() {
+  document.removeEventListener('pointerdown', onOutsideSizePop, true);
+  sizePop?.remove();
+  sizePop = null;
+  updateToolbar();
 }
 
 /* ---------------- Geri al / yinele ---------------- */
@@ -601,7 +702,7 @@ function onDown(e) {
     active.stroke = {
       tool: hl ? 'hl' : 'pen',
       color: hl ? HL_COLORS[settings.hlColor] : PEN_COLORS[settings.penColor],
-      width: hl ? HL_WIDTHS[settings.hlWidth] : PEN_WIDTHS[settings.penWidth],
+      width: hl ? settings.hlSize : settings.penSize,
       pts: [],
     };
     addPoint(e, true);
