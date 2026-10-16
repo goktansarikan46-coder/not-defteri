@@ -2,7 +2,7 @@ import * as db from './db.js';
 import * as ui from './ui.js';
 import { icon } from './icons.js';
 import { openPdf } from './pdf.js';
-import { drawStroke, drawStrokes, hitStroke, renderPdfPage, renderThumb, renderInkLayer, canvasBytes } from './render.js';
+import { drawStroke, drawStrokes, hitStroke, renderPdfPage, renderThumb, renderInkLayer, canvasBytes, THUMB_VERSION } from './render.js';
 import { uid, loadJSON, saveJSON, round2, clamp } from './util.js';
 
 const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
@@ -61,7 +61,7 @@ export async function openEditor(id) {
     }
     const ink = new Map((await db.getAllByIndex('ink', 'notebookId', id)).map((r) => [r.pageId, r.strokes]));
     for (const p of nb.pages) if (!ink.has(p.id)) ink.set(p.id, []);
-    ed = { nb, pdf, ink, views: [], zoom: 1, pxPerPt: 1, undo: [], redo: [], dirty: new Set(), changed: false, saveTimer: 0, renderTimer: 0, io: null, topBar: null };
+    ed = { nb, pdf, ink, views: [], zoom: 1, pxPerPt: 1, undo: [], redo: [], dirty: new Set(), changed: false, saveTimer: 0, renderTimer: 0, io: null };
     $('tb-title').textContent = nb.title;
     buildPages();
     pagesEl.scrollLeft = 0;
@@ -86,6 +86,7 @@ export async function closeEditor() {
     e.nb.updatedAt = Date.now();
     try {
       e.nb.thumb = await renderThumb(e.pdf, e.nb.pages[0], e.ink.get(e.nb.pages[0].id));
+      e.nb.thumbV = THUMB_VERSION;
     } catch (err) {
       console.warn('Küçük resim oluşturulamadı', err);
     }
@@ -118,15 +119,6 @@ class PageView {
     this.ink = document.createElement('canvas');
     this.ink.className = 'ink';
     this.el.append(this.ink);
-
-    this.bar = document.createElement('div');
-    this.bar.className = 'pbar';
-    this.bar.innerHTML = `<span class="plabel"></span>
-      <button class="padd">${icon('plus')}<span>Araya boş sayfa ekle</span></button>
-      <button class="pdel" title="Bu sayfayı sil">${icon('trash')}</button>`;
-    this.label = this.bar.querySelector('.plabel');
-    this.bar.querySelector('.padd').onclick = () => insertBlank(ed.views.indexOf(this) + 1);
-    this.bar.querySelector('.pdel').onclick = () => deletePage(this);
   }
 
   get strokes() {
@@ -209,18 +201,12 @@ class PageView {
 function buildPages() {
   sheetEl.innerHTML = '';
   ed.io = new IntersectionObserver(onIntersect, { root: pagesEl, rootMargin: '100% 50%' });
-  ed.topBar = document.createElement('div');
-  ed.topBar.className = 'pbar top';
-  ed.topBar.innerHTML = `<button class="padd">${icon('plus')}<span>Başa boş sayfa ekle</span></button>`;
-  ed.topBar.querySelector('.padd').onclick = () => insertBlank(0);
-  sheetEl.append(ed.topBar);
   for (const page of ed.nb.pages) {
     const v = new PageView(page);
     ed.views.push(v);
-    sheetEl.append(v.el, v.bar);
+    sheetEl.append(v.el);
   }
   layout();
-  updateLabels();
   for (const v of ed.views) ed.io.observe(v.el);
 }
 
@@ -244,18 +230,9 @@ function layout() {
     const w = v.page.w * ed.pxPerPt;
     v.el.style.width = w + 'px';
     v.el.style.height = v.page.h * ed.pxPerPt + 'px';
-    v.bar.style.width = w + 'px';
     widest = Math.max(widest, w);
   }
-  ed.topBar.style.width = (ed.views[0]?.page.w ?? maxW) * ed.pxPerPt + 'px';
   sheetEl.style.width = Math.max(cw, widest + 32) + 'px';
-}
-
-function updateLabels() {
-  const n = ed.views.length;
-  ed.views.forEach((v, i) => {
-    v.label.textContent = `Sayfa ${i + 1} / ${n}`;
-  });
 }
 
 function scheduleRerender() {
@@ -308,6 +285,24 @@ function zoomBy(factor) {
 
 /* ---------------- Sayfa ekleme / silme ---------------- */
 
+// Ekranın ortasındaki sayfaya göre çalışır; sağ alttaki sayaç hangi sayfa olduğunu gösterir.
+async function pageMenu() {
+  if (!ed) return;
+  const idx = currentIndex();
+  const action = await ui.actionSheet({
+    title: `Sayfa ${idx + 1} / ${ed.views.length}`,
+    actions: [
+      { id: 'after', label: 'Bu sayfadan sonra boş sayfa ekle' },
+      { id: 'before', label: 'Bu sayfadan önce boş sayfa ekle' },
+      { id: 'delete', label: 'Bu sayfayı sil', danger: true },
+    ],
+  });
+  if (!ed) return;
+  if (action === 'after') insertBlank(idx + 1);
+  else if (action === 'before') insertBlank(idx);
+  else if (action === 'delete') deletePage(ed.views[idx]);
+}
+
 async function insertBlank(index) {
   if (!ed) return;
   const ref = ed.nb.pages[index - 1] || ed.nb.pages[index] || A4;
@@ -315,11 +310,10 @@ async function insertBlank(index) {
   ed.nb.pages.splice(index, 0, page);
   ed.ink.set(page.id, []);
   const v = new PageView(page);
-  const anchor = index === 0 ? ed.topBar : ed.views[index - 1].bar;
-  anchor.after(v.el, v.bar);
+  if (index < ed.views.length) ed.views[index].el.before(v.el);
+  else sheetEl.append(v.el);
   ed.views.splice(index, 0, v);
   layout();
-  updateLabels();
   ed.io.observe(v.el);
   ed.changed = true;
   await saveNotebook();
@@ -347,7 +341,6 @@ async function deletePage(v) {
   ed.io.unobserve(v.el);
   v.release();
   v.el.remove();
-  v.bar.remove();
   ed.views.splice(idx, 1);
   ed.nb.pages.splice(idx, 1);
   ed.ink.delete(id);
@@ -358,7 +351,6 @@ async function deletePage(v) {
   await db.del('ink', id);
   await saveNotebook();
   layout();
-  updateLabels();
   updateToolbar();
   updateIndicator();
   ui.toast('Sayfa silindi');
@@ -415,7 +407,7 @@ function buildToolbar() {
     <button class="icon" id="tb-zoom-out" title="Uzaklaştır">${icon('zoomOut')}</button>
     <button class="icon" id="tb-zoom-in" title="Yakınlaştır">${icon('zoomIn')}</button>
     <span class="spacer"></span>
-    <button class="icon" id="tb-add-page" title="Bu sayfadan sonra boş sayfa ekle">${icon('filePlus')}</button>
+    <button class="icon" id="tb-page-menu" title="Sayfa işlemleri (boş sayfa ekle, sayfayı sil)">${icon('more')}</button>
     <button class="icon" id="tb-finger" title="Parmakla çizim (kapalıyken parmak sayfayı kaydırır)">${icon('hand')}</button>
     <button class="icon" id="tb-export" title="PDF olarak dışa aktar">${icon('download')}</button>`;
 
@@ -438,7 +430,7 @@ function buildToolbar() {
   $('tb-redo').onclick = redo;
   $('tb-zoom-in').onclick = () => zoomBy(1.25);
   $('tb-zoom-out').onclick = () => zoomBy(0.8);
-  $('tb-add-page').onclick = () => insertBlank(currentIndex() + 1);
+  $('tb-page-menu').onclick = pageMenu;
   $('tb-finger').onclick = () => {
     settings.fingerDraw = !settings.fingerDraw;
     saveSettings();

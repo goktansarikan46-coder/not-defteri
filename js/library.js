@@ -2,11 +2,13 @@ import * as db from './db.js';
 import * as ui from './ui.js';
 import { icon } from './icons.js';
 import { openPdf, pageSizes, isPasswordError } from './pdf.js';
-import { renderThumb } from './render.js';
+import { renderThumb, THUMB_VERSION } from './render.js';
 import { createBackup, readBackup, restoreBackup, lastBackupTime, markBackedUp } from './backup.js';
 import { uid, collator, formatDate, escapeHtml, loadJSON, saveJSON, round2 } from './util.js';
 
 const A4 = { w: 595.28, h: 841.89 };
+export const FOLDER_COLORS = ['#3b82f6', '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#ec4899', '#64748b'];
+export const folderColor = (f) => f.color || FOLDER_COLORS[0];
 const $ = (id) => document.getElementById(id);
 
 let current = loadJSON('nd-library', { folder: 'root' }).folder;
@@ -71,6 +73,41 @@ export async function renderLibrary() {
     grid.append(folderCard(f, count, folders, notebooks));
   }
   for (const nb of nbs) grid.append(notebookCard(nb, folders));
+  upgradeThumbs(nbs);
+}
+
+// Eski sürümde üretilmiş düşük çözünürlüklü küçük resimleri arka planda tek tek yeniden üretir.
+let upgrading = false;
+async function upgradeThumbs(nbs) {
+  if (upgrading) return;
+  upgrading = true;
+  try {
+    for (const { id } of nbs.filter((n) => (n.thumbV || 1) < THUMB_VERSION)) {
+      const nb = await db.get('notebooks', id);
+      if (!nb || (nb.thumbV || 1) >= THUMB_VERSION) continue;
+      const page = nb.pages[0];
+      let doc = null;
+      try {
+        if (page.kind === 'pdf' && nb.fileId) {
+          const file = await db.get('files', nb.fileId);
+          if (file) doc = await openPdf(file.blob);
+        }
+        const strokes = (await db.get('ink', page.id))?.strokes || [];
+        const thumb = await renderThumb(doc, page, strokes);
+        const latest = await db.get('notebooks', id);
+        if (!latest) continue;
+        await db.put('notebooks', { ...latest, thumb, thumbV: THUMB_VERSION });
+        const box = document.querySelector(`.card[data-id="${id}"] .thumb`);
+        if (box) box.innerHTML = `<img src="${thumb}" alt="">`;
+      } catch (err) {
+        console.warn('Küçük resim yenilenemedi', err);
+      } finally {
+        doc?.destroy();
+      }
+    }
+  } finally {
+    upgrading = false;
+  }
 }
 
 function crumb(label, id, isCurrent) {
@@ -95,6 +132,7 @@ function card(className, thumbHtml, name, sub) {
 
 function folderCard(f, count, folders, notebooks) {
   const el = card('folder', icon('folder'), f.name, count ? `${count} öğe` : 'Boş');
+  el.style.setProperty('--fc', folderColor(f));
   el.addEventListener('click', (e) => {
     if (e.target.closest('.more')) return;
     setCurrent(f.id);
@@ -104,12 +142,16 @@ function folderCard(f, count, folders, notebooks) {
     const action = await ui.actionSheet({
       title: f.name,
       actions: [
+        { id: 'color', label: 'Rengini değiştir' },
         { id: 'rename', label: 'Yeniden adlandır' },
         { id: 'move', label: 'Taşı' },
         { id: 'delete', label: 'Klasörü sil', danger: true },
       ],
     });
-    if (action === 'rename') {
+    if (action === 'color') {
+      const color = await ui.colorPicker({ title: `"${f.name}" rengi`, colors: FOLDER_COLORS, selected: folderColor(f) });
+      if (color) await db.put('folders', { ...f, color });
+    } else if (action === 'rename') {
       const name = await ui.promptModal({ title: 'Klasörü yeniden adlandır', value: f.name, ok: 'Kaydet' });
       if (name) await db.put('folders', { ...f, name });
     } else if (action === 'move') {
@@ -138,6 +180,7 @@ function folderCard(f, count, folders, notebooks) {
 function notebookCard(nb, folders) {
   const thumb = nb.thumb ? `<img src="${nb.thumb}" alt="">` : icon('file');
   const el = card('notebook', thumb, nb.title, `${nb.pages.length} sayfa · ${formatDate(nb.updatedAt)}`);
+  el.dataset.id = nb.id;
   el.addEventListener('click', (e) => {
     if (e.target.closest('.more')) return;
     openNotebook(nb.id);
@@ -192,7 +235,10 @@ function descendants(rootId, folders) {
 async function newFolder() {
   const name = await ui.promptModal({ title: 'Yeni klasör', placeholder: 'Klasör adı (ör. Matematik)', ok: 'Oluştur' });
   if (!name) return;
-  await db.put('folders', { id: uid(), parentId: current, name, createdAt: Date.now() });
+  // Yeni klasörler sırayla farklı renk alır, böylece en baştan birbirinden ayrılırlar.
+  const count = (await db.getAll('folders')).length;
+  const color = FOLDER_COLORS[count % FOLDER_COLORS.length];
+  await db.put('folders', { id: uid(), parentId: current, name, color, createdAt: Date.now() });
   renderLibrary();
 }
 
@@ -203,6 +249,7 @@ async function newBlankNotebook() {
   const page = { id: uid(), kind: 'blank', w: A4.w, h: A4.h };
   const nb = { id: uid(), folderId: current, title, fileId: null, pages: [page], createdAt: now, updatedAt: now, lastPage: 0 };
   nb.thumb = await renderThumb(null, page, []);
+  nb.thumbV = THUMB_VERSION;
   await db.put('notebooks', nb);
   openNotebook(nb.id);
 }
@@ -335,6 +382,7 @@ export async function importPdf(blob, fileName = 'Belge.pdf') {
       lastPage: 0,
     };
     nb.thumb = await renderThumb(doc, nb.pages[0], []);
+    nb.thumbV = THUMB_VERSION;
     await db.put('files', { id: fileId, name: fileName, blob });
     await db.put('notebooks', nb);
     navigator.storage?.persist?.().catch(() => {});

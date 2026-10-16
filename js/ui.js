@@ -94,6 +94,22 @@ export function actionSheet({ title, actions }) {
   }, 'sheet');
 }
 
+export function colorPicker({ title, colors, selected }) {
+  return modal((box, close) => {
+    const grid = el('div', 'color-grid');
+    for (const c of colors) {
+      const b = el('button', 'color-choice' + (c === selected ? ' selected' : ''));
+      b.style.setProperty('--c', c);
+      b.setAttribute('aria-label', c);
+      b.onclick = () => close(c);
+      grid.append(b);
+    }
+    const cancel = el('button', 'btn', 'Vazgeç');
+    cancel.onclick = () => close(null);
+    box.append(el('h3', '', title), grid, buttonRow([cancel]));
+  });
+}
+
 // Klasör ağacından hedef seçtirir. exclude: seçilemeyecek klasör id'leri (kendisi ve alt klasörleri).
 export function folderPicker({ title, folders, exclude = new Set(), selected = 'root' }) {
   return modal((box, close) => {
@@ -104,9 +120,10 @@ export function folderPicker({ title, folders, exclude = new Set(), selected = '
     }
     let choice = selected;
     const list = el('div', 'folder-list');
-    const addRow = (id, name, depth) => {
+    const addRow = (id, name, depth, color) => {
       const row = el('button', 'folder-row' + (id === choice ? ' selected' : ''), name);
       row.style.paddingLeft = 12 + depth * 22 + 'px';
+      if (color) row.style.setProperty('--fc', color);
       row.onclick = () => {
         choice = id;
         list.querySelectorAll('.folder-row').forEach((r) => r.classList.remove('selected'));
@@ -118,7 +135,7 @@ export function folderPicker({ title, folders, exclude = new Set(), selected = '
       const kids = (children.get(parentId) || []).sort((a, b) => collator.compare(a.name, b.name));
       for (const f of kids) {
         if (exclude.has(f.id)) continue;
-        addRow(f.id, f.name, depth);
+        addRow(f.id, f.name, depth, f.color || '#3b82f6');
         walk(f.id, depth + 1);
       }
     };

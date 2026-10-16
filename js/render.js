@@ -81,7 +81,12 @@ export async function renderPdfPage(pdfDoc, page, canvas) {
   await pp.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 }
 
-export async function renderThumb(pdfDoc, page, strokes, width = 240) {
+// Kart tablette ~200px genişliğinde, ekran yoğunluğu 2x; 560px netlik için yeterli.
+// THUMB_VERSION artınca eski düşük çözünürlüklü küçük resimler kitaplıkta yeniden üretilir.
+export const THUMB_VERSION = 2;
+const THUMB_WIDTH = 560;
+
+export async function renderThumb(pdfDoc, page, strokes, width = THUMB_WIDTH) {
   const c = document.createElement('canvas');
   c.width = width;
   c.height = Math.round((width * page.h) / page.w);
@@ -94,7 +99,7 @@ export async function renderThumb(pdfDoc, page, strokes, width = 240) {
     ctx.setTransform(k, 0, 0, k, 0, 0);
     drawStrokes(ctx, strokes);
   }
-  return c.toDataURL('image/jpeg', 0.8);
+  return c.toDataURL('image/jpeg', 0.86);
 }
 
 // Dışa aktarma için şeffaf arka planlı yüksek çözünürlüklü mürekkep katmanı.
