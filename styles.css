@@ -115,6 +115,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .backup-hint span { display: flex; align-items: center; gap: 8px; }
 .backup-hint .i { color: #d97706; flex: none; }
 
+.app-version {
+  position: absolute; left: 16px; bottom: max(10px, env(safe-area-inset-bottom));
+  font-size: 12px; color: var(--muted); opacity: 0.7; pointer-events: none;
+}
+
 /* ---------- Editör ---------- */
 .toolbar {
   display: flex; align-items: center; gap: 2px; height: 58px; padding: 0 8px; flex: none;

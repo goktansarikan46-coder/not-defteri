@@ -1,6 +1,8 @@
 // Uygulama dosyalarını önbelleğe alır; tablet internete bağlı olmasa da uygulama açılır.
-// Önbellekteki sürüm hemen gösterilir, arka planda yenisi indirilir (bir sonraki açılışta görünür).
-const CACHE = 'not-defteri-v4';
+// İnternet varsa her zaman sunucudaki en yeni dosya kullanılır (güncellemeler hemen gelir);
+// internet yoksa ya da sunucu birkaç saniye içinde cevap vermezse önbellekteki kopya açılır.
+const CACHE = 'not-defteri-v5';
+const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',
   'index.html',
@@ -24,7 +26,7 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -39,17 +41,22 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  event.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const key = req.mode === 'navigate' ? 'index.html' : req;
-      const cached = await cache.match(key, { ignoreSearch: true });
-      const network = fetch(req)
-        .then((res) => {
-          if (res.ok) cache.put(key, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    }),
-  );
+  event.respondWith(networkFirst(req));
 });
+
+async function networkFirst(req) {
+  const cache = await caches.open(CACHE);
+  const key = req.mode === 'navigate' ? 'index.html' : req;
+  try {
+    // no-cache: tarayıcının kendi HTTP önbelleğindeki eski kopyayı değil, sunucudakini doğrula.
+    const res = await Promise.race([
+      fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), NETWORK_TIMEOUT_MS)),
+    ]);
+    if (res.ok) cache.put(key, res.clone());
+    return res;
+  } catch {
+    const cached = await cache.match(key, { ignoreSearch: true });
+    return cached || Response.error();
+  }
+}

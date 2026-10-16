@@ -1,3 +1,6 @@
+// Her yayında bir artır (sw.js içindeki CACHE adıyla aynı sayı); kitaplığın köşesinde görünür.
+export const APP_VERSION = 5;
+
 // crypto.randomUUID yalnızca HTTPS'te var; yerel ağdan (http) açıldığında da çalışsın diye kendi kimlik üreticimiz.
 export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);

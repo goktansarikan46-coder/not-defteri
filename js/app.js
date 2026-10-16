@@ -1,4 +1,5 @@
-import { initLibrary, renderLibrary, currentFolder, showFolder } from './library.js';
+import { initLibrary, currentFolder, showFolder } from './library.js';
+import { APP_VERSION } from './util.js';
 import { initEditor, openEditor, closeEditor, isEditorOpen } from './editor.js';
 import { toast } from './ui.js';
 
@@ -31,11 +32,19 @@ window.addEventListener('popstate', async (e) => {
 initLibrary({ onOpenNotebook: showNotebook });
 initEditor({ onBack: () => history.back() });
 
-// Uygulama en son açık kalan klasörde başlar; geri hareketi oradan kitaplığın başına döner.
-const startFolder = currentFolder();
+// Uygulama her açılışta kitaplığın başında başlar. Dokunuş olmadan geçmişe adım eklemek (eski davranış)
+// Chrome tarafından "atlanabilir" sayılır ve tabletin geri hareketi uygulamayı doğrudan kapatır.
+// Bu yüzden geçmişe yalnızca kullanıcı bir klasöre / deftere dokunduğunda adım ekleniyor.
 history.replaceState({ folder: 'root' }, '');
-if (startFolder !== 'root') history.pushState({ folder: startFolder }, '');
-renderLibrary();
+showFolder('root');
+renderVersion();
+
+function renderVersion() {
+  const el = document.createElement('div');
+  el.className = 'app-version';
+  el.textContent = 'Sürüm ' + APP_VERSION;
+  libraryEl.append(el);
+}
 
 // Tarayıcıdan "kalıcı depolama" iste: yer azaldığında notlar otomatik silinmesin.
 navigator.storage?.persist?.().catch(() => {});
