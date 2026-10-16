@@ -1,5 +1,9 @@
 # Not Defteri
 
+**Uygulamayı aç:** https://goktansarikan46-coder.github.io/not-defteri/
+
+Tablette bu adresi Chrome'un adres çubuğuna yaz, sonra ⋮ menüsünden "Uygulamayı yükle"yi seç.
+
 Tablette kalemle PDF üzerine not almak için kişisel bir web uygulaması (PWA).
 
 - PDF açıp üzerine kalem / fosforlu kalem ile yazma (basınca duyarlı, 8+6 kalınlık, favori kalemler)
