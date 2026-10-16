@@ -1,68 +1,70 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Not Defteri maskotu: elinde kalem tutan tatlı tilki (özgün çizim) -->
+  <!-- Not Defteri maskotu: kapüşonlu üst giymiş, sakin bakışlı tilki (özgün çizim).
+       "head" grubu uygulama ikonunda tek başına kullanılır. -->
   <defs>
     <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFA552"/>
-      <stop offset="1" stop-color="#F07A2A"/>
+      <stop offset="0" stop-color="#E9772F"/>
+      <stop offset="1" stop-color="#C9541D"/>
     </linearGradient>
-    <linearGradient id="tailFur" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#F07A2A"/>
-      <stop offset="1" stop-color="#FF9C45"/>
+    <linearGradient id="earFur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C9541D"/>
+      <stop offset="1" stop-color="#E26C29"/>
+    </linearGradient>
+    <linearGradient id="hoodie" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4558"/>
+      <stop offset="1" stop-color="#262E3C"/>
     </linearGradient>
   </defs>
 
-  <!-- Kuyruk (gövdenin arkasında) -->
-  <path d="M318 410 C 380 420, 438 380, 436 318 C 434 270, 400 238, 372 246 C 392 280, 384 330, 340 352 C 318 364, 304 384, 318 410 Z" fill="url(#tailFur)"/>
-  <path d="M372 246 C 400 238, 434 270, 436 318 C 418 300, 398 292, 384 296 C 392 278, 388 258, 372 246 Z" fill="#FFF3E4"/>
-
-  <!-- Gövde -->
-  <path d="M182 392 C 176 336, 210 304, 256 304 C 302 304, 336 336, 330 392 C 326 432, 298 452, 256 452 C 214 452, 186 432, 182 392 Z" fill="url(#fur)"/>
-  <path d="M214 400 C 212 362, 232 342, 256 342 C 280 342, 300 362, 298 400 C 296 428, 280 440, 256 440 C 232 440, 216 428, 214 400 Z" fill="#FFF3E4"/>
-  <!-- Ayaklar -->
-  <ellipse cx="220" cy="452" rx="30" ry="16" fill="#5B3A29"/>
-  <ellipse cx="292" cy="452" rx="30" ry="16" fill="#5B3A29"/>
-
-  <!-- Kalem (iki patiyle tutuluyor, ucu sağ yukarıda) -->
-  <g transform="rotate(-22 256 400)">
-    <rect x="178" y="388" width="152" height="24" rx="5" fill="#FFD43B"/>
-    <rect x="178" y="388" width="152" height="8" rx="4" fill="#FFE57A"/>
-    <rect x="164" y="388" width="20" height="24" rx="6" fill="#FF8FA3"/>
-    <rect x="180" y="388" width="8" height="24" fill="#B9C3D0"/>
-    <path d="M330 388 L 360 400 L 330 412 Z" fill="#F5D7B0"/>
-    <path d="M350 396 L 360 400 L 350 404 Z" fill="#3A2A20"/>
+  <!-- Gövde: kapüşonlu üst -->
+  <g id="body">
+    <path d="M78 512 C 82 432, 148 384, 256 376 C 364 384, 430 432, 434 512 Z" fill="url(#hoodie)"/>
+    <!-- Kapüşon kenarı (boynun arkasında) -->
+    <path d="M150 404 C 168 372, 210 356, 256 356 C 302 356, 344 372, 362 404 C 330 392, 296 388, 256 388 C 216 388, 182 392, 150 404 Z" fill="#1E2531"/>
+    <!-- Boyun tüyü -->
+    <path d="M206 360 C 214 396, 236 420, 256 428 C 276 420, 298 396, 306 360 C 290 372, 274 376, 256 376 C 238 376, 222 372, 206 360 Z" fill="#F3ECE2"/>
+    <!-- Yaka ve bağcıklar -->
+    <path d="M196 398 C 214 430, 236 446, 256 452 C 276 446, 298 430, 316 398" fill="none" stroke="#1E2531" stroke-width="6" stroke-linecap="round"/>
+    <path d="M232 444 L 226 492" stroke="#C9CED8" stroke-width="5" stroke-linecap="round"/>
+    <path d="M280 444 L 286 492" stroke="#C9CED8" stroke-width="5" stroke-linecap="round"/>
+    <rect x="221" y="488" width="10" height="16" rx="3" fill="#9AA3B2"/>
+    <rect x="281" y="488" width="10" height="16" rx="3" fill="#9AA3B2"/>
   </g>
-  <!-- Kollar ve patiler -->
-  <path d="M198 336 C 180 360, 190 404, 214 418 C 230 424, 240 410, 232 396 C 224 380, 222 356, 214 340 Z" fill="url(#fur)"/>
-  <circle cx="222" cy="413" r="15" fill="#5B3A29"/>
-  <path d="M314 336 C 334 352, 326 380, 304 392 C 290 398, 280 386, 286 374 C 292 364, 300 350, 300 338 Z" fill="url(#fur)"/>
-  <circle cx="293" cy="385" r="15" fill="#5B3A29"/>
 
-  <!-- Kulaklar -->
-  <path d="M150 196 C 132 140, 140 84, 160 62 C 182 74, 220 112, 236 150 Z" fill="url(#fur)"/>
-  <path d="M164 168 C 156 132, 160 104, 168 90 C 182 102, 204 128, 214 152 Z" fill="#FFE1C7"/>
-  <path d="M362 196 C 380 140, 372 84, 352 62 C 330 74, 292 112, 276 150 Z" fill="url(#fur)"/>
-  <path d="M348 168 C 356 132, 352 104, 344 90 C 330 102, 308 128, 298 152 Z" fill="#FFE1C7"/>
+  <g id="head" transform="translate(51.2 44) scale(0.8)">
+    <!-- Kulaklar -->
+    <path d="M128 224 L 144 76 C 146 64, 158 60, 166 68 L 234 154 Z" fill="url(#earFur)" stroke="#D45F22" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M384 224 L 368 76 C 366 64, 354 60, 346 68 L 278 154 Z" fill="url(#earFur)" stroke="#D45F22" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M152 198 L 160 104 L 212 162 Z" fill="#2A1A12"/>
+    <path d="M360 198 L 352 104 L 300 162 Z" fill="#2A1A12"/>
+    <path d="M156 196 C 168 176, 180 168, 196 166 C 184 178, 176 190, 172 204 Z" fill="#F3ECE2" opacity=".85"/>
+    <path d="M356 196 C 344 176, 332 168, 316 166 C 328 178, 336 190, 340 204 Z" fill="#F3ECE2" opacity=".85"/>
 
-  <!-- Baş -->
-  <path d="M256 118 C 342 118, 392 168, 392 230 C 392 296, 334 336, 256 336 C 178 336, 120 296, 120 230 C 120 168, 170 118, 256 118 Z" fill="url(#fur)"/>
-  <!-- Yanak ve ağız çevresi (beyaz maske) -->
-  <path d="M128 250 C 150 238, 196 236, 230 262 C 244 272, 250 280, 256 280 C 262 280, 268 272, 282 262 C 316 236, 362 238, 384 250 C 374 302, 322 334, 256 334 C 190 334, 138 302, 128 250 Z" fill="#FFF3E4"/>
-  <!-- Alındaki küçük tutam -->
-  <path d="M240 122 C 248 138, 264 138, 272 122 C 264 128, 248 128, 240 122 Z" fill="#E86F22"/>
+    <!-- Baş: geniş alın, sivri burun -->
+    <path d="M256 146 C 326 146, 376 182, 392 232 L 426 262 C 388 302, 326 362, 256 420 C 186 362, 124 302, 86 262 L 120 232 C 136 182, 186 146, 256 146 Z" fill="url(#fur)" stroke="#DA6526" stroke-width="12" stroke-linejoin="round"/>
+    <!-- Yanaklardaki beyaz tüy -->
+    <path d="M86 262 C 146 266, 196 290, 230 338 C 242 354, 250 378, 256 420 C 262 378, 270 354, 282 338 C 316 290, 366 266, 426 262 C 388 302, 326 362, 256 420 C 186 362, 124 302, 86 262 Z" fill="#F3ECE2" stroke="#F3ECE2" stroke-width="12" stroke-linejoin="round"/>
+    <!-- Alından buruna inen koyu çizgi -->
+    <path d="M244 160 C 250 200, 252 240, 256 300 C 260 240, 262 200, 268 160 C 260 156, 252 156, 244 160 Z" fill="#B9491A" opacity=".55"/>
 
-  <!-- Gözler -->
-  <ellipse cx="200" cy="232" rx="21" ry="25" fill="#2B1B12"/>
-  <ellipse cx="312" cy="232" rx="21" ry="25" fill="#2B1B12"/>
-  <circle cx="207" cy="222" r="8" fill="#fff"/>
-  <circle cx="319" cy="222" r="8" fill="#fff"/>
-  <circle cx="193" cy="242" r="3.5" fill="#fff" opacity=".8"/>
-  <circle cx="305" cy="242" r="3.5" fill="#fff" opacity=".8"/>
+    <!-- Kaşlar -->
+    <path d="M168 212 C 186 202, 210 202, 228 210" fill="none" stroke="#8E3613" stroke-width="7" stroke-linecap="round"/>
+    <path d="M344 212 C 326 202, 302 202, 284 210" fill="none" stroke="#8E3613" stroke-width="7" stroke-linecap="round"/>
 
-  <!-- Yanaklarda pembelik -->
-  <ellipse cx="164" cy="270" rx="22" ry="12" fill="#FF8FA3" opacity=".55"/>
-  <ellipse cx="348" cy="270" rx="22" ry="12" fill="#FF8FA3" opacity=".55"/>
+    <!-- Gözler: badem şeklinde, kehribar renkli, sakin bakış -->
+    <path d="M166 246 C 182 228, 214 224, 234 240 C 218 258, 188 262, 166 246 Z" fill="#E39A32"/>
+    <circle cx="203" cy="244" r="12" fill="#C47A1C" opacity=".55"/>
+    <circle cx="204" cy="243" r="7.5" fill="#1B110B"/>
+    <circle cx="208" cy="239" r="2.6" fill="#fff"/>
+    <path d="M164 245 C 182 224, 216 220, 236 238" fill="none" stroke="#1B110B" stroke-width="8" stroke-linecap="round"/>
+    <path d="M346 246 C 330 228, 298 224, 278 240 C 294 258, 324 262, 346 246 Z" fill="#E39A32"/>
+    <circle cx="309" cy="244" r="12" fill="#C47A1C" opacity=".55"/>
+    <circle cx="308" cy="243" r="7.5" fill="#1B110B"/>
+    <circle cx="312" cy="239" r="2.6" fill="#fff"/>
+    <path d="M348 245 C 330 224, 296 220, 276 238" fill="none" stroke="#1B110B" stroke-width="8" stroke-linecap="round"/>
 
-  <!-- Burun ve gülümseme -->
-  <path d="M244 268 C 244 260, 268 260, 268 268 C 268 276, 260 282, 256 282 C 252 282, 244 276, 244 268 Z" fill="#2B1B12"/>
-  <path d="M236 290 C 242 300, 252 300, 256 290 C 260 300, 270 300, 276 290" fill="none" stroke="#2B1B12" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Burun -->
+    <path d="M238 396 C 238 386, 274 386, 274 396 C 274 408, 262 416, 256 416 C 250 416, 238 408, 238 396 Z" fill="#1B110B"/>
+    <ellipse cx="250" cy="393" rx="5" ry="2.5" fill="#fff" opacity=".35"/>
+  </g>
 </svg>
