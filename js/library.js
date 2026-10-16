@@ -90,7 +90,7 @@ export async function renderLibrary() {
   const nbs = (q ? notebooks.filter((n) => match(n.title)) : notebooks.filter((n) => n.folderId === current)).sort(
     (a, b) => b.updatedAt - a.updatedAt,
   );
-  renderBackupHint(notebooks.length);
+  renderBackupHint(notebooks);
   const grid = $('lib-grid');
   grid.innerHTML = '';
   if (q) {
@@ -302,7 +302,8 @@ async function newBlankNotebook() {
 
 /* ---------------- Yedekleme ---------------- */
 
-const BACKUP_REMIND_DAYS = 7;
+const BACKUP_REMIND_DAYS = 3; // son yedekten sonra değişiklik varsa bu kadar gün sonra hatırlat
+const SNOOZE_MS = 86_400_000; // "Yarın hatırlat"
 
 function backupAgeText() {
   const at = lastBackupTime();
@@ -311,21 +312,45 @@ function backupAgeText() {
   return days === 0 ? 'Son yedek: bugün.' : `Son yedek: ${days} gün önce (${formatDate(at)}).`;
 }
 
-function renderBackupHint(notebookCount) {
+// Tarayıcı notları "kalıcı" saklıyor mu? Değilse tablette yer azaldığında silebilir.
+async function storageIsPersistent() {
+  try {
+    return (await navigator.storage?.persisted?.()) ?? true;
+  } catch {
+    return true;
+  }
+}
+
+async function renderBackupHint(notebooks) {
   const hint = $('backup-hint');
   const at = lastBackupTime();
-  const stale = notebookCount > 0 && Date.now() - at > BACKUP_REMIND_DAYS * 86_400_000;
-  hint.classList.toggle('hidden', !stale);
-  if (!stale) return;
-  hint.innerHTML = `<span>${icon('archive')}${escapeHtml(backupAgeText())} Notların sadece bu tablette duruyor.</span>
-    <button class="btn">Şimdi yedek al</button>`;
-  hint.querySelector('button').onclick = () => backupMenu();
+  const changed = notebooks.filter((n) => n.updatedAt > at).length;
+  const days = (Date.now() - at) / 86_400_000;
+  const snoozed = Date.now() < (loadJSON('nd-backup-snooze', { until: 0 }).until || 0);
+  const persistent = await storageIsPersistent();
+  const needsBackup = notebooks.length > 0 && changed > 0 && (!at || days >= BACKUP_REMIND_DAYS);
+  const show = !snoozed && (needsBackup || (!persistent && notebooks.length > 0));
+  hint.classList.toggle('hidden', !show);
+  if (!show) return;
+  const parts = [];
+  if (needsBackup) {
+    parts.push(at ? `${backupAgeText()} O zamandan beri ${changed} defterde değişiklik var.` : 'Henüz hiç yedek almadın.');
+  }
+  if (!persistent) parts.push('Tarayıcı notlarını kalıcı olarak saklamayı onaylamadı; tablette yer azalırsa silinebilirler.');
+  parts.push('Notların sadece bu tablette duruyor.');
+  hint.innerHTML = `<span>${icon('archive')}${escapeHtml(parts.join(' '))}</span>
+    <span class="hint-actions"><button class="btn ghost" data-a="snooze">Yarın hatırlat</button><button class="btn" data-a="backup">Şimdi yedek al</button></span>`;
+  hint.querySelector('[data-a=backup]').onclick = () => backupMenu();
+  hint.querySelector('[data-a=snooze]').onclick = () => {
+    saveJSON('nd-backup-snooze', { until: Date.now() + SNOOZE_MS });
+    hint.classList.add('hidden');
+  };
 }
 
 async function backupMenu() {
   const canShare = !!navigator.canShare;
   const action = await ui.actionSheet({
-    title: 'Yedekleme · ' + backupAgeText(),
+    title: 'Yedekleme · ' + backupAgeText() + ((await storageIsPersistent()) ? '' : ' ⚠ Depolama kalıcı değil.'),
     actions: [
       { id: 'download', label: 'Yedek al ve indir' },
       ...(canShare ? [{ id: 'share', label: 'Yedek al ve paylaş (Drive, e-posta…)' }] : []),

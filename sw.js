@@ -1,7 +1,7 @@
 // Uygulama dosyalarını önbelleğe alır; tablet internete bağlı olmasa da uygulama açılır.
 // İnternet varsa her zaman sunucudaki en yeni dosya kullanılır (güncellemeler hemen gelir);
 // internet yoksa ya da sunucu birkaç saniye içinde cevap vermezse önbellekteki kopya açılır.
-const CACHE = 'not-defteri-v12';
+const CACHE = 'not-defteri-v13';
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',

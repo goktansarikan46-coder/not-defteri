@@ -117,6 +117,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .backup-hint span { display: flex; align-items: center; gap: 8px; }
 .backup-hint .i { color: #d97706; flex: none; }
+.backup-hint span:first-child { flex: 1; min-width: 260px; }
+.hint-actions { display: flex; gap: 8px; }
+.btn.ghost { background: none; border-color: transparent; color: var(--muted); }
 
 /* Silgi seçenekleri */
 .chip {

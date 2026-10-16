@@ -98,9 +98,17 @@ export function initEditor(opts) {
     layout();
     scheduleRerender();
   });
+  // Uygulamadan çıkılırken (ana ekrana dönme, başka uygulamaya geçme, ekranı kapatma) her şeyi hemen kaydet.
+  // Açık bir metin kutusu da kutuya dönüştürülüp kaydedilir: Android uygulamayı arka planda kapatırsa yazı kaybolmasın.
+  const saveNow = () => {
+    if (!ed) return;
+    commitText();
+    flushSaves();
+  };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushSaves();
+    if (document.visibilityState === 'hidden') saveNow();
   });
+  window.addEventListener('pagehide', saveNow);
 }
 
 /* ---------------- Açma / kapama ---------------- */
@@ -708,21 +716,27 @@ function markDirty(pageId) {
   ed.dirty.add(pageId);
   ed.changed = true;
   clearTimeout(ed.saveTimer);
-  ed.saveTimer = setTimeout(flushSaves, 700);
+  ed.saveTimer = setTimeout(flushSaves, 300); // kısa gecikme: hızlı yazarken her çizgide diske yazmayalım
 }
 
 async function flushSaves() {
   if (!ed) return;
   clearTimeout(ed.saveTimer);
   const { nb, ink } = ed;
-  const ids = [...ed.dirty];
+  const ids = [...ed.dirty].filter((id) => ink.has(id));
   ed.dirty.clear();
+  if (!ids.length) return;
+  // Değişen sayfalar ve defterin "son değişiklik" zamanı tek işlemde yazılır (yarım kayıt olmaz);
+  // böylece uygulama defter açıkken kapansa bile yedek hatırlatıcısı değişikliği görür.
+  nb.updatedAt = Date.now();
   try {
-    for (const pageId of ids) {
-      if (ink.has(pageId)) await db.put('ink', { pageId, notebookId: nb.id, strokes: ink.get(pageId) });
-    }
+    await db.putMany({
+      ink: ids.map((pageId) => ({ pageId, notebookId: nb.id, strokes: ink.get(pageId) })),
+      notebooks: [nb],
+    });
   } catch (err) {
     console.error(err);
+    if (ed?.nb === nb) ids.forEach((id) => ed.dirty.add(id)); // bir sonraki denemede tekrar yazılsın
     ui.toast('Kaydedilemedi! Tablette yer kalmamış olabilir.');
   }
 }
