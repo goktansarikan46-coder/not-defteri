@@ -1,4 +1,5 @@
-import { collator } from './util.js';
+import { collator, loadJSON, saveJSON } from './util.js';
+import { TEMPLATES, drawTemplate } from './render.js';
 
 const root = () => document.getElementById('modal-root');
 
@@ -92,6 +93,59 @@ export function actionSheet({ title, actions }) {
     }
     box.append(list);
   }, 'sheet');
+}
+
+// Sayfa şablonu seçtirir; en son seçilen şablon hatırlanır.
+// withPosition: "bu sayfadan sonra / önce" seçeneği de gösterilir. Dönüş: { template, position } ya da null.
+export function templatePicker({ title, ok = 'Ekle', withPosition = false }) {
+  const saved = loadJSON('nd-template', { template: 'blank', position: 'after' });
+  return modal((box, close) => {
+    let template = saved.template;
+    let position = saved.position;
+    const grid = el('div', 'tpl-grid');
+    for (const t of TEMPLATES) {
+      const b = el('button', 'tpl' + (t.id === template ? ' selected' : ''));
+      const c = document.createElement('canvas');
+      c.width = 150;
+      c.height = 212;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      const k = c.width / 595.28;
+      ctx.setTransform(k, 0, 0, k, 0, 0);
+      drawTemplate(ctx, { w: 595.28, h: 841.89, template: t.id });
+      b.append(c, el('span', '', t.label));
+      b.onclick = () => {
+        template = t.id;
+        grid.querySelectorAll('.tpl').forEach((x) => x.classList.remove('selected'));
+        b.classList.add('selected');
+      };
+      b.ondblclick = () => submit();
+      grid.append(b);
+    }
+    box.append(el('h3', '', title), grid);
+    if (withPosition) {
+      const seg = el('div', 'segmented');
+      for (const [id, label] of [['after', 'Bu sayfadan sonra'], ['before', 'Bu sayfadan önce']]) {
+        const b = el('button', id === position ? 'on' : '', label);
+        b.onclick = () => {
+          position = id;
+          seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        };
+        seg.append(b);
+      }
+      box.append(seg);
+    }
+    const submit = () => {
+      saveJSON('nd-template', { template, position });
+      close({ template, position });
+    };
+    const cancel = el('button', 'btn', 'Vazgeç');
+    cancel.onclick = () => close(null);
+    const okBtn = el('button', 'btn primary', ok);
+    okBtn.onclick = submit;
+    box.append(buttonRow([cancel, okBtn]));
+  }, 'wide');
 }
 
 export function colorPicker({ title, colors, selected }) {

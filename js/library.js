@@ -259,8 +259,10 @@ async function newFolder() {
 async function newBlankNotebook() {
   const title = await ui.promptModal({ title: 'Yeni boş defter', value: 'Yeni defter', ok: 'Oluştur' });
   if (!title) return;
+  const choice = await ui.templatePicker({ title: 'Sayfa şablonu', ok: 'Oluştur' });
+  if (!choice) return;
   const now = Date.now();
-  const page = { id: uid(), kind: 'blank', w: A4.w, h: A4.h };
+  const page = { id: uid(), kind: 'blank', w: A4.w, h: A4.h, template: choice.template };
   const nb = { id: uid(), folderId: current, title, fileId: null, pages: [page], createdAt: now, updatedAt: now, lastPage: 0 };
   nb.thumb = await renderThumb(null, page, []);
   nb.thumbV = THUMB_VERSION;

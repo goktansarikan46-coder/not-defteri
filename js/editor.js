@@ -2,7 +2,19 @@ import * as db from './db.js';
 import * as ui from './ui.js';
 import { icon } from './icons.js';
 import { openPdf } from './pdf.js';
-import { drawStroke, drawStrokes, hitStroke, renderPdfPage, renderThumb, renderInkLayer, canvasBytes, THUMB_VERSION } from './render.js';
+import {
+  drawStroke,
+  drawStrokes,
+  hitStroke,
+  renderPdfPage,
+  renderThumb,
+  renderInkLayer,
+  canvasBytes,
+  THUMB_VERSION,
+  drawTemplate,
+  templateShapes,
+  hasTemplate,
+} from './render.js';
 import { uid, loadJSON, saveJSON, round2, clamp } from './util.js';
 
 const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
@@ -18,7 +30,7 @@ const ERASER_RADIUS_PX = 10;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 5;
 const MAX_CANVAS_AREA = 12_000_000; // tablet belleğini korumak için sayfa başına üst sınır
-const PALM_GUARD_MS = 600; // kalem yakındayken parmak/avuç dokunuşları yok sayılır
+const PALM_GUARD_MS = 450; // kalem yakındayken parmak/avuç dokunuşları yok sayılır
 const A4 = { w: 595.28, h: 841.89 };
 
 const settings = loadJSON('nd-tools', { tool: 'pen', penColor: 0, hlColor: 0, penWidth: 1, hlWidth: 1, fingerDraw: false });
@@ -86,6 +98,7 @@ export async function closeEditor() {
   if (!ed) return;
   const e = ed;
   if (sizePop) closeSizePop();
+  closeOverlays();
   active = null;
   touches.clear();
   stopInertia();
@@ -120,7 +133,7 @@ class PageView {
     this.el = document.createElement('div');
     this.el.className = 'page';
     this.el._view = this;
-    if (page.kind === 'pdf') {
+    if (page.kind === 'pdf' || hasTemplate(page)) {
       this.bg = document.createElement('canvas');
       this.bg.className = 'bg';
       this.el.append(this.bg);
@@ -156,7 +169,19 @@ class PageView {
     this.ink.width = w;
     this.ink.height = h;
     this.drawInk();
-    if (this.page.kind !== 'pdf' || !ed.pdf) return;
+    if (this.page.kind !== 'pdf') {
+      // Şablon (çizgi/kare/nokta) vektörel olduğu için her çözünürlükte anında çizilir.
+      if (this.bg) {
+        this.bg.width = w;
+        this.bg.height = h;
+        const ctx = this.bg.getContext('2d');
+        const k = w / this.page.w;
+        ctx.setTransform(k, 0, 0, k, 0, 0);
+        drawTemplate(ctx, this.page);
+      }
+      return;
+    }
+    if (!ed.pdf) return;
     // Önce görünmeyen bir tuvale çiz, bitince değiştir: yakınlaştırırken titreme olmasın.
     const tmp = document.createElement('canvas');
     tmp.width = w;
@@ -301,21 +326,29 @@ async function pageMenu() {
   const action = await ui.actionSheet({
     title: `Sayfa ${idx + 1} / ${ed.views.length}`,
     actions: [
-      { id: 'after', label: 'Bu sayfadan sonra boş sayfa ekle' },
-      { id: 'before', label: 'Bu sayfadan önce boş sayfa ekle' },
+      { id: 'add', label: 'Sayfa ekle…' },
+      { id: 'duplicate', label: 'Bu sayfayı çoğalt' },
+      { id: 'overview', label: 'Tüm sayfalar' },
       { id: 'delete', label: 'Bu sayfayı sil', danger: true },
     ],
   });
   if (!ed) return;
-  if (action === 'after') insertBlank(idx + 1);
-  else if (action === 'before') insertBlank(idx);
+  if (action === 'add') addPageDialog(idx);
+  else if (action === 'duplicate') duplicatePage(idx);
+  else if (action === 'overview') openOverview();
   else if (action === 'delete') deletePage(ed.views[idx]);
 }
 
-async function insertBlank(index) {
+async function addPageDialog(idx) {
+  const choice = await ui.templatePicker({ title: 'Sayfa ekle', withPosition: true });
+  if (!choice || !ed) return;
+  insertBlank(choice.position === 'before' ? idx : idx + 1, choice.template);
+}
+
+async function insertBlank(index, template = 'blank') {
   if (!ed) return;
   const ref = ed.nb.pages[index - 1] || ed.nb.pages[index] || A4;
-  const page = { id: uid(), kind: 'blank', w: ref.w, h: ref.h };
+  const page = { id: uid(), kind: 'blank', w: ref.w, h: ref.h, template };
   ed.nb.pages.splice(index, 0, page);
   ed.ink.set(page.id, []);
   const v = new PageView(page);
@@ -328,7 +361,46 @@ async function insertBlank(index) {
   await saveNotebook();
   pagesEl.scrollTop = v.el.offsetTop - 12;
   updateIndicator();
-  ui.toast(`Boş sayfa eklendi (sayfa ${index + 1})`);
+  ui.toast(`Sayfa eklendi (sayfa ${index + 1})`);
+}
+
+async function duplicatePage(idx) {
+  if (!ed) return;
+  const src = ed.nb.pages[idx];
+  const page = { ...src, id: uid() };
+  const strokes = structuredClone(ed.ink.get(src.id) || []);
+  ed.nb.pages.splice(idx + 1, 0, page);
+  ed.ink.set(page.id, strokes);
+  const v = new PageView(page);
+  ed.views[idx].el.after(v.el);
+  ed.views.splice(idx + 1, 0, v);
+  layout();
+  ed.io.observe(v.el);
+  ed.changed = true;
+  await saveNotebook();
+  if (strokes.length) markDirty(page.id);
+  pagesEl.scrollTop = v.el.offsetTop - 12;
+  updateIndicator();
+  refreshOverview();
+  ui.toast(`Sayfa ${idx + 1} çoğaltıldı`);
+}
+
+// Sayfaları verilen kimlik sırasına göre dizer (genel bakışta sürükle-bırak).
+async function reorderPages(order) {
+  const byId = new Map(ed.views.map((v) => [v.page.id, v]));
+  ed.views = order.map((id) => byId.get(id));
+  ed.nb.pages = ed.views.map((v) => v.page);
+  sheetEl.append(...ed.views.map((v) => v.el)); // DOM düğümleri taşınır, çizilmiş tuvaller korunur
+  layout();
+  ed.changed = true;
+  await saveNotebook();
+  updateIndicator();
+}
+
+function scrollToPage(idx) {
+  const v = ed.views[clamp(idx, 0, ed.views.length - 1)];
+  pagesEl.scrollTop = v.el.offsetTop - 12;
+  updateIndicator();
 }
 
 async function deletePage(v) {
@@ -362,7 +434,171 @@ async function deletePage(v) {
   layout();
   updateToolbar();
   updateIndicator();
+  refreshOverview();
   ui.toast('Sayfa silindi');
+}
+
+/* ---------------- Sayfa genel bakışı ---------------- */
+
+let overview = null; // { el, grid, io, thumbs: Map }
+
+export function closeOverlays() {
+  if (!overview) return false;
+  overview.io.disconnect();
+  overview.el.remove();
+  overview = null;
+  return true;
+}
+
+function openOverview() {
+  if (!ed || overview) return;
+  const el = document.createElement('div');
+  el.className = 'overview';
+  el.innerHTML = `<header class="ov-head"><b>Tüm sayfalar</b><span class="ov-hint">Dokun: sayfaya git · Tutamaktan sürükle: sırayı değiştir</span>
+    <button class="icon" id="ov-close" title="Kapat">${icon('close')}</button></header><div class="ov-grid"></div>`;
+  $('editor').append(el);
+  const grid = el.querySelector('.ov-grid');
+  overview = { el, grid, io: new IntersectionObserver(onThumbVisible, { root: grid, rootMargin: '300px' }), thumbs: new Map() };
+  // Genel bakış tarayıcı geçmişine bir adım olarak eklenir: geri hareketi onu kapatır, defteri değil.
+  history.pushState({ ...history.state, overview: true }, '');
+  el.querySelector('#ov-close').onclick = () => history.back();
+  refreshOverview();
+  grid.querySelector('.ov-tile.current')?.scrollIntoView({ block: 'center' });
+}
+
+function refreshOverview() {
+  if (!overview || !ed) return;
+  const { grid, io } = overview;
+  io.disconnect();
+  grid.innerHTML = '';
+  const cur = currentIndex();
+  ed.views.forEach((v, i) => {
+    const tile = document.createElement('div');
+    tile.className = 'ov-tile' + (i === cur ? ' current' : '');
+    tile.dataset.id = v.page.id;
+    tile.innerHTML = `<button class="ov-thumb" style="aspect-ratio:${v.page.w}/${v.page.h}"></button>
+      <div class="ov-foot"><button class="ov-grip" title="Sürükleyerek taşı">${icon('grip')}</button>
+      <span class="ov-num">${i + 1}</span><button class="ov-more" title="Seçenekler">${icon('more')}</button></div>`;
+    tile.querySelector('.ov-thumb').onclick = () => {
+      const idx = ed.views.findIndex((x) => x.page.id === v.page.id);
+      history.back();
+      scrollToPage(idx);
+    };
+    tile.querySelector('.ov-more').onclick = () => tileMenu(v.page.id);
+    tile.querySelector('.ov-grip').addEventListener('pointerdown', (e) => startTileDrag(e, tile));
+    grid.append(tile);
+    io.observe(tile);
+  });
+}
+
+async function tileMenu(pageId) {
+  const idx = ed.views.findIndex((v) => v.page.id === pageId);
+  const action = await ui.actionSheet({
+    title: `Sayfa ${idx + 1}`,
+    actions: [
+      { id: 'duplicate', label: 'Çoğalt' },
+      { id: 'add', label: 'Sonrasına sayfa ekle…' },
+      { id: 'delete', label: 'Sil', danger: true },
+    ],
+  });
+  if (!ed) return;
+  if (action === 'duplicate') duplicatePage(idx);
+  else if (action === 'delete') deletePage(ed.views[idx]);
+  else if (action === 'add') {
+    const choice = await ui.templatePicker({ title: 'Sayfa ekle' });
+    if (choice && ed) {
+      await insertBlank(idx + 1, choice.template);
+      refreshOverview();
+    }
+  }
+}
+
+async function onThumbVisible(entries) {
+  for (const entry of entries) {
+    if (!entry.isIntersecting || !overview) continue;
+    overview.io.unobserve(entry.target);
+    const id = entry.target.dataset.id;
+    const page = ed.nb.pages.find((p) => p.id === id);
+    if (!page) continue;
+    const strokes = ed.ink.get(id) || [];
+    const key = id + ':' + strokes.length;
+    let url = overview.thumbs.get(key);
+    if (!url) {
+      try {
+        url = await renderThumb(ed.pdf, page, strokes, 300);
+      } catch {
+        continue;
+      }
+      overview?.thumbs.set(key, url);
+    }
+    const btn = entry.target.querySelector('.ov-thumb');
+    if (btn) btn.style.backgroundImage = `url(${url})`;
+  }
+}
+
+// Tutamaktan sürükle-bırak: kart parmağı/kalemi takip eder, bırakılınca yeni sıra kaydedilir.
+function startTileDrag(e, tile) {
+  e.preventDefault();
+  const grip = e.currentTarget;
+  try {
+    grip.setPointerCapture(e.pointerId);
+  } catch {
+    /* yoksay */
+  }
+  const grid = overview.grid;
+  const r = tile.getBoundingClientRect();
+  const ghost = tile.cloneNode(true);
+  ghost.classList.add('ov-ghost');
+  ghost.style.width = r.width + 'px';
+  ghost.style.left = r.left + 'px';
+  ghost.style.top = r.top + 'px';
+  document.body.append(ghost);
+  tile.classList.add('dragging');
+  const offX = e.clientX - r.left;
+  const offY = e.clientY - r.top;
+  let scrollRaf = 0;
+  let lastY = e.clientY;
+  const move = (ev) => {
+    lastY = ev.clientY;
+    ghost.style.left = ev.clientX - offX + 'px';
+    ghost.style.top = ev.clientY - offY + 'px';
+    ghost.style.display = 'none';
+    const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.ov-tile');
+    ghost.style.display = '';
+    if (over && over !== tile) {
+      const o = over.getBoundingClientRect();
+      over[ev.clientX < o.left + o.width / 2 ? 'before' : 'after'](tile);
+    }
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(autoScroll);
+  };
+  const autoScroll = () => {
+    scrollRaf = 0;
+    const g = grid.getBoundingClientRect();
+    const edge = 70;
+    const dy = lastY < g.top + edge ? -12 : lastY > g.bottom - edge ? 12 : 0;
+    if (dy) {
+      grid.scrollTop += dy;
+      scrollRaf = requestAnimationFrame(autoScroll);
+    }
+  };
+  const end = async () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', end);
+    grip.removeEventListener('pointercancel', end);
+    cancelAnimationFrame(scrollRaf);
+    ghost.remove();
+    tile.classList.remove('dragging');
+    const order = [...grid.querySelectorAll('.ov-tile')].map((t) => t.dataset.id);
+    const changed = order.some((id, i) => id !== ed.nb.pages[i].id);
+    if (changed) {
+      await reorderPages(order);
+      grid.querySelectorAll('.ov-num').forEach((n, i) => (n.textContent = i + 1));
+      ui.toast('Sayfa sırası değişti');
+    }
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
 }
 
 /* ---------------- Kaydetme ---------------- */
@@ -416,7 +652,8 @@ function buildToolbar() {
     <button class="icon" id="tb-zoom-out" title="Uzaklaştır">${icon('zoomOut')}</button>
     <button class="icon" id="tb-zoom-in" title="Yakınlaştır">${icon('zoomIn')}</button>
     <span class="spacer"></span>
-    <button class="icon" id="tb-page-menu" title="Sayfa işlemleri (boş sayfa ekle, sayfayı sil)">${icon('more')}</button>
+    <button class="icon" id="tb-overview" title="Tüm sayfalar">${icon('pages')}</button>
+    <button class="icon" id="tb-page-menu" title="Sayfa işlemleri (sayfa ekle, çoğalt, sil)">${icon('more')}</button>
     <button class="icon" id="tb-finger" title="Parmakla çizim (kapalıyken parmak sayfayı kaydırır)">${icon('hand')}</button>
     <button class="icon" id="tb-export" title="PDF olarak dışa aktar">${icon('download')}</button>`;
 
@@ -440,6 +677,7 @@ function buildToolbar() {
   $('tb-zoom-in').onclick = () => zoomBy(1.25);
   $('tb-zoom-out').onclick = () => zoomBy(0.8);
   $('tb-page-menu').onclick = pageMenu;
+  $('tb-overview').onclick = openOverview;
   $('tb-finger').onclick = () => {
     settings.fingerDraw = !settings.fingerDraw;
     saveSettings();
@@ -820,9 +1058,19 @@ function drawLive() {
 
 // Parmak hareketleri tarayıcıya bırakılmıyor (touch-action: none), çünkü kalemle yazarken sayfanın
 // kaymaması gerekiyor. Bu yüzden kaydırma, iki parmakla yakınlaştırma ve kayma ataleti burada yapılıyor.
+// Çok parmakla kısa dokunuş: 2 parmak = geri al, 3 parmak = yinele (GoodNotes'taki gibi).
+const TAP_MAX_MS = 350;
+const TAP_MAX_MOVE = 14;
+let tap = null; // { start, max, moved, zoom, origins: Map }
+
 function startTouch(e) {
   capture(e.pointerId);
   stopInertia();
+  if (touches.size === 0) tap = { start: performance.now(), max: 0, moved: false, zoom: ed.zoom, origins: new Map() };
+  if (tap) {
+    tap.origins.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    tap.max = Math.max(tap.max, touches.size + 1);
+  }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   velSamples = [];
   if (touches.size === 2) {
@@ -835,6 +1083,17 @@ function moveTouch(e) {
   const prev = touches.get(e.pointerId);
   const cur = { x: e.clientX, y: e.clientY };
   touches.set(e.pointerId, cur);
+  const o = tap?.origins.get(e.pointerId);
+  if (o && !tap.moved && Math.hypot(cur.x - o.x, cur.y - o.y) > TAP_MAX_MOVE) {
+    tap.moved = true;
+    // Dokunuş değil hareketmiş: yakınlaştırmayı parmakların şu anki konumundan başlat (sıçrama olmasın).
+    if (touches.size >= 2) {
+      const [a, b] = [...touches.values()];
+      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: ed.zoom, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+    }
+  }
+  // Dokunuş olarak kalacaksa sayfayı oynatma (iki parmağın minik kayması yakınlaştırma yapmasın).
+  if (tap && !tap.moved && tap.max >= 2) return;
   if (pinch && touches.size >= 2) {
     const [a, b] = [...touches.values()];
     const cx = (a.x + b.x) / 2;
@@ -857,6 +1116,23 @@ function moveTouch(e) {
 
 function endTouch(e) {
   touches.delete(e.pointerId);
+  if (touches.size === 0 && tap) {
+    const t = tap;
+    tap = null;
+    if (!t.moved && t.max >= 2 && performance.now() - t.start <= TAP_MAX_MS) {
+      pinch = null;
+      if (t.max === 2) {
+        if (ed.undo.length) {
+          undo();
+          ui.toast('Geri alındı');
+        }
+      } else if (ed.redo.length) {
+        redo();
+        ui.toast('Yinelendi');
+      }
+      return;
+    }
+  }
   if (pinch) {
     if (touches.size < 2) {
       pinch = null;
@@ -969,6 +1245,7 @@ async function buildPdf() {
     }
     if (!p) {
       p = out.addPage([page.w, page.h]);
+      if (hasTemplate(page)) drawTemplatePdf(p, page);
       if (page.kind === 'pdf' && ed.pdf) {
         const c = document.createElement('canvas');
         c.width = Math.round(page.w * 2);
@@ -984,6 +1261,17 @@ async function buildPdf() {
     drawOverlay(p, png, page, degrees);
   }
   return out.save();
+}
+
+// Şablonu PDF'e vektör olarak çizer (PDF'te y ekseni aşağıdan yukarı doğru).
+function drawTemplatePdf(p, page) {
+  const { rgb } = window.PDFLib;
+  const color = (hex) => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
+  const { lines, dots } = templateShapes(page);
+  for (const [x1, y1, x2, y2, c, width] of lines) {
+    p.drawLine({ start: { x: x1, y: page.h - y1 }, end: { x: x2, y: page.h - y2 }, thickness: width, color: color(c) });
+  }
+  for (const [x, y, r, c] of dots) p.drawCircle({ x, y: page.h - y, size: r, color: color(c) });
 }
 
 // Döndürülmüş PDF sayfalarında notların ekranda göründüğü yerde kalması için görüntüyü ters yönde döndür.

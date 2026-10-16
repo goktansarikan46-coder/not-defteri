@@ -115,6 +115,51 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .backup-hint span { display: flex; align-items: center; gap: 8px; }
 .backup-hint .i { color: #d97706; flex: none; }
 
+/* Şablon seçici */
+.modal.wide { width: min(560px, 100%); }
+.tpl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.tpl {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 6px;
+  border: 0; border-radius: 12px; background: none; font-size: 14px;
+}
+.tpl canvas { width: 100%; height: auto; border-radius: 4px; box-shadow: 0 0 0 1px var(--line), var(--shadow); }
+.tpl.selected { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.tpl.selected canvas { box-shadow: 0 0 0 2px var(--accent); }
+.segmented { display: flex; margin-top: 16px; padding: 3px; border-radius: 12px; background: var(--bg); }
+.segmented button { flex: 1; border: 0; background: none; padding: 9px 8px; border-radius: 9px; color: var(--muted); }
+.segmented button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
+/* Tüm sayfalar (genel bakış) */
+.overview { position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+.ov-head {
+  display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 8px 0 20px; flex: none;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.ov-head b { font-size: 17px; }
+.ov-hint { flex: 1; color: var(--muted); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ov-head .icon { width: 42px; height: 42px; border: 0; border-radius: 10px; background: none; display: grid; place-items: center; }
+.ov-grid {
+  flex: 1; overflow: auto; padding: 20px; display: grid; gap: 18px; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.ov-tile { display: flex; flex-direction: column; gap: 6px; }
+.ov-tile.dragging { opacity: 0.25; }
+.ov-thumb {
+  width: 100%; border: 0; padding: 0; border-radius: 6px; background: #fff center / cover no-repeat;
+  box-shadow: 0 0 0 1px var(--line), var(--shadow);
+}
+.ov-tile.current .ov-thumb { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
+.ov-foot { display: flex; align-items: center; justify-content: space-between; }
+.ov-num { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ov-tile.current .ov-num { color: var(--accent); font-weight: 650; }
+.ov-grip, .ov-more {
+  width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted);
+  display: grid; place-items: center; touch-action: none;
+}
+.ov-grip { cursor: grab; }
+.ov-ghost { position: fixed; z-index: 200; pointer-events: none; opacity: 0.9; transform: scale(1.04); }
+.ov-ghost .ov-thumb { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35); }
+
 .app-version {
   position: absolute; left: 16px; bottom: max(10px, env(safe-area-inset-bottom));
   font-size: 12px; color: var(--muted); opacity: 0.7; pointer-events: none;

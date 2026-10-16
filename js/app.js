@@ -1,6 +1,6 @@
 import { initLibrary, currentFolder, showFolder } from './library.js';
 import { APP_VERSION } from './util.js';
-import { initEditor, openEditor, closeEditor, isEditorOpen } from './editor.js';
+import { initEditor, openEditor, closeEditor, isEditorOpen, closeOverlays } from './editor.js';
 import { toast } from './ui.js';
 
 const libraryEl = document.getElementById('library');
@@ -23,6 +23,8 @@ async function showNotebook(id) {
 }
 
 window.addEventListener('popstate', async (e) => {
+  // Defterin içinde açık bir ekran (ör. tüm sayfalar) varsa geri hareketi önce onu kapatır.
+  if (isEditorOpen() && closeOverlays()) return;
   if (isEditorOpen()) await closeEditor();
   editorEl.classList.add('hidden');
   libraryEl.classList.remove('hidden');

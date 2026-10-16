@@ -75,6 +75,64 @@ function segDist2(px, py, ax, ay, bx, by) {
   return cx * cx + cy * cy;
 }
 
+/* ---------------- Sayfa şablonları ---------------- */
+
+export const TEMPLATES = [
+  { id: 'blank', label: 'Boş' },
+  { id: 'lined', label: 'Çizgili' },
+  { id: 'grid', label: 'Kareli' },
+  { id: 'dotted', label: 'Noktalı' },
+];
+const MM5 = 14.17; // 5 mm, PDF noktası cinsinden
+
+// Şablonu çizgi ve noktalar olarak tarif eder; aynı tarif hem ekrana hem dışa aktarılan PDF'e çizilir.
+// lines: [x1, y1, x2, y2, renk, kalınlık]   dots: [x, y, yarıçap, renk]
+export function templateShapes(page) {
+  const { w, h } = page;
+  const lines = [];
+  const dots = [];
+  switch (page.template) {
+    case 'lined':
+      for (let y = 72; y <= h - 30; y += 24) lines.push([0, y, w, y, '#c3cfe0', 0.6]);
+      lines.push([58, 0, 58, h, '#f0a3a3', 0.8]);
+      break;
+    case 'grid':
+      for (let x = MM5; x < w; x += MM5) lines.push([x, 0, x, h, '#d3dcea', 0.45]);
+      for (let y = MM5; y < h; y += MM5) lines.push([0, y, w, y, '#d3dcea', 0.45]);
+      break;
+    case 'dotted':
+      for (let y = MM5; y < h; y += MM5) for (let x = MM5; x < w; x += MM5) dots.push([x, y, 0.8, '#a9b5c7']);
+      break;
+  }
+  return { lines, dots };
+}
+
+// ctx sayfa koordinatlarına (pt) ölçeklenmiş olmalı.
+export function drawTemplate(ctx, page) {
+  const { lines, dots } = templateShapes(page);
+  ctx.save();
+  for (const [x1, y1, x2, y2, color, width] of lines) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  if (dots.length) {
+    ctx.fillStyle = dots[0][3];
+    ctx.beginPath();
+    for (const [x, y, r] of dots) {
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+export const hasTemplate = (page) => page.kind !== 'pdf' && !!page.template && page.template !== 'blank';
+
 export async function renderPdfPage(pdfDoc, page, canvas) {
   const pp = await pdfDoc.getPage(page.pdfPage);
   const viewport = pp.getViewport({ scale: canvas.width / page.w });
@@ -94,11 +152,10 @@ export async function renderThumb(pdfDoc, page, strokes, width = THUMB_WIDTH) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
   if (page.kind === 'pdf' && pdfDoc) await renderPdfPage(pdfDoc, page, c);
-  if (strokes?.length) {
-    const k = width / page.w;
-    ctx.setTransform(k, 0, 0, k, 0, 0);
-    drawStrokes(ctx, strokes);
-  }
+  const k = width / page.w;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  if (hasTemplate(page)) drawTemplate(ctx, page);
+  if (strokes?.length) drawStrokes(ctx, strokes);
   return c.toDataURL('image/jpeg', 0.86);
 }
 
