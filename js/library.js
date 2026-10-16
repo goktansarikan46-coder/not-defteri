@@ -19,6 +19,22 @@ function setCurrent(id) {
   saveJSON('nd-library', { folder: id });
 }
 
+export const currentFolder = () => current;
+
+// Klasöre girmek tarayıcı geçmişine bir adım ekler; böylece tabletin geri hareketi
+// (kenardan kaydırma) uygulamadan çıkmak yerine bir önceki klasöre döner.
+function enterFolder(id) {
+  setCurrent(id);
+  history.pushState({ folder: id }, '');
+  renderLibrary();
+}
+
+// Geri/ileri hareketinde çağrılır: geçmişe yeni adım eklemeden klasörü gösterir.
+export function showFolder(id) {
+  setCurrent(id || 'root');
+  renderLibrary();
+}
+
 export function initLibrary({ onOpenNotebook }) {
   openNotebook = onOpenNotebook;
   $('btn-backup').innerHTML = icon('archive') + '<span>Yedek</span>';
@@ -115,8 +131,7 @@ function crumb(label, id, isCurrent) {
   b.className = 'crumb' + (isCurrent ? ' current' : '');
   b.textContent = label;
   b.onclick = () => {
-    setCurrent(id);
-    renderLibrary();
+    if (id !== current) enterFolder(id);
   };
   return b;
 }
@@ -135,8 +150,7 @@ function folderCard(f, count, folders, notebooks) {
   el.style.setProperty('--fc', folderColor(f));
   el.addEventListener('click', (e) => {
     if (e.target.closest('.more')) return;
-    setCurrent(f.id);
-    renderLibrary();
+    enterFolder(f.id);
   });
   el.querySelector('.more').addEventListener('click', async () => {
     const action = await ui.actionSheet({

@@ -1,6 +1,6 @@
 // Uygulama dosyalarını önbelleğe alır; tablet internete bağlı olmasa da uygulama açılır.
 // Önbellekteki sürüm hemen gösterilir, arka planda yenisi indirilir (bir sonraki açılışta görünür).
-const CACHE = 'not-defteri-v3';
+const CACHE = 'not-defteri-v4';
 const SHELL = [
   './',
   'index.html',
