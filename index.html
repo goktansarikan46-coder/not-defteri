@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Not Defteri</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/pdf-lib.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="library" class="view">
+    <header class="topbar">
+      <nav class="crumbs" id="crumbs"></nav>
+      <div class="actions">
+        <button class="btn" id="btn-backup"></button>
+        <button class="btn" id="btn-new-folder"></button>
+        <button class="btn" id="btn-new-notebook"></button>
+        <button class="btn primary" id="btn-import"></button>
+      </div>
+    </header>
+    <div class="backup-hint hidden" id="backup-hint"></div>
+    <main class="grid" id="lib-grid"></main>
+  </div>
+
+  <div id="editor" class="view hidden">
+    <header class="toolbar" id="toolbar"></header>
+    <div class="pages" id="pages"></div>
+    <div class="page-indicator" id="page-indicator"></div>
+  </div>
+
+  <div id="modal-root"></div>
+  <script>
+    // Dosyaya çift tıklanarak açıldıysa uygulama çalışamaz; ne yapılacağını göster.
+    if (location.protocol === 'file:') {
+      document.body.innerHTML =
+        '<div style="max-width:520px;margin:15vh auto;padding:24px;font:16px/1.5 system-ui;text-align:center">' +
+        '<h2>Bu dosya çift tıklanarak açılamaz</h2>' +
+        '<p>Klasördeki <b>Baslat.bat</b> dosyasına çift tıkla. Uygulama tarayıcıda kendiliğinden açılır.</p></div>';
+    }
+  </script>
+  <input type="file" id="pdf-input" accept="application/pdf,.pdf" hidden>
+  <input type="file" id="backup-input" hidden>
+</body>
+</html>

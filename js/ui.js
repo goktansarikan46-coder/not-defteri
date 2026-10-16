@@ -1,0 +1,155 @@
+import { collator } from './util.js';
+
+const root = () => document.getElementById('modal-root');
+
+function modal(build, extraClass = '') {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'backdrop';
+    const box = document.createElement('div');
+    box.className = 'modal ' + extraClass;
+    backdrop.append(box);
+    let finished = false;
+    const close = (value) => {
+      if (finished) return;
+      finished = true;
+      document.removeEventListener('keydown', onKey);
+      backdrop.remove();
+      resolve(value);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(null);
+    };
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(null);
+    });
+    build(box, close);
+    root().append(backdrop);
+  });
+}
+
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function buttonRow(buttons) {
+  const row = el('div', 'row');
+  row.append(...buttons);
+  return row;
+}
+
+export function promptModal({ title, value = '', placeholder = '', ok = 'Tamam' }) {
+  return modal((box, close) => {
+    const input = el('input', 'input');
+    input.type = 'text';
+    input.value = value;
+    input.placeholder = placeholder;
+    const submit = () => {
+      const v = input.value.trim();
+      if (v) close(v);
+      else input.focus();
+    };
+    const cancel = el('button', 'btn', 'Vazgeç');
+    cancel.onclick = () => close(null);
+    const okBtn = el('button', 'btn primary', ok);
+    okBtn.onclick = submit;
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+    box.append(el('h3', '', title), input, buttonRow([cancel, okBtn]));
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 30);
+  });
+}
+
+export async function confirmModal({ title, message = '', ok = 'Sil', danger = true }) {
+  const answer = await modal((box, close) => {
+    const cancel = el('button', 'btn', 'Vazgeç');
+    cancel.onclick = () => close(false);
+    const okBtn = el('button', danger ? 'btn danger' : 'btn primary', ok);
+    okBtn.onclick = () => close(true);
+    box.append(el('h3', '', title));
+    if (message) box.append(el('p', 'msg', message));
+    box.append(buttonRow([cancel, okBtn]));
+  });
+  return answer === true;
+}
+
+export function actionSheet({ title, actions }) {
+  return modal((box, close) => {
+    if (title) box.append(el('h3', '', title));
+    const list = el('div', 'action-list');
+    for (const a of actions) {
+      const b = el('button', 'action' + (a.danger ? ' danger' : ''), a.label);
+      b.onclick = () => close(a.id);
+      list.append(b);
+    }
+    box.append(list);
+  }, 'sheet');
+}
+
+// Klasör ağacından hedef seçtirir. exclude: seçilemeyecek klasör id'leri (kendisi ve alt klasörleri).
+export function folderPicker({ title, folders, exclude = new Set(), selected = 'root' }) {
+  return modal((box, close) => {
+    const children = new Map();
+    for (const f of folders) {
+      if (!children.has(f.parentId)) children.set(f.parentId, []);
+      children.get(f.parentId).push(f);
+    }
+    let choice = selected;
+    const list = el('div', 'folder-list');
+    const addRow = (id, name, depth) => {
+      const row = el('button', 'folder-row' + (id === choice ? ' selected' : ''), name);
+      row.style.paddingLeft = 12 + depth * 22 + 'px';
+      row.onclick = () => {
+        choice = id;
+        list.querySelectorAll('.folder-row').forEach((r) => r.classList.remove('selected'));
+        row.classList.add('selected');
+      };
+      list.append(row);
+    };
+    const walk = (parentId, depth) => {
+      const kids = (children.get(parentId) || []).sort((a, b) => collator.compare(a.name, b.name));
+      for (const f of kids) {
+        if (exclude.has(f.id)) continue;
+        addRow(f.id, f.name, depth);
+        walk(f.id, depth + 1);
+      }
+    };
+    addRow('root', 'Kitaplık (ana klasör)', 0);
+    walk('root', 1);
+    const cancel = el('button', 'btn', 'Vazgeç');
+    cancel.onclick = () => close(null);
+    const okBtn = el('button', 'btn primary', 'Buraya taşı');
+    okBtn.onclick = () => close(choice);
+    box.append(el('h3', '', title), list, buttonRow([cancel, okBtn]));
+  });
+}
+
+let toastEl = null;
+let toastTimer = 0;
+export function toast(message) {
+  if (!toastEl) {
+    toastEl = el('div', 'toast');
+    document.body.append(toastEl);
+  }
+  toastEl.textContent = message;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+}
+
+export function busy(message) {
+  const b = el('div', 'backdrop busy');
+  const box = el('div', 'busy-box');
+  box.append(el('div', 'spinner'), el('span', '', message));
+  b.append(box);
+  document.body.append(b);
+  return () => b.remove();
+}
