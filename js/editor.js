@@ -29,8 +29,18 @@ import { recognizeShape } from './shapes.js';
 import { pdfUtil } from './pdf.js';
 import { uid, loadJSON, saveJSON, round2, clamp, fold } from './util.js';
 
-const PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
-const HL_COLORS = ['#facc15', '#4ade80', '#f472b6', '#60a5fa', '#fb923c'];
+const DEFAULT_PEN_COLORS = ['#111827', '#1d4ed8', '#dc2626', '#15803d', '#7c3aed'];
+const DEFAULT_HL_COLORS = ['#facc15', '#4ade80', '#f472b6', '#60a5fa', '#fb923c'];
+// Renk seçicide çıkan hazır renkler
+const PEN_PRESETS = [
+  '#111827', '#4b5563', '#9ca3af', '#ffffff', '#1e3a8a', '#1d4ed8', '#0ea5e9', '#06b6d4',
+  '#0d9488', '#15803d', '#22c55e', '#84cc16', '#ca8a04', '#f59e0b', '#ea580c', '#dc2626',
+  '#b91c1c', '#f43f5e', '#ec4899', '#c026d3', '#9333ea', '#7c3aed', '#92400e', '#78350f',
+];
+const HL_PRESETS = [
+  '#facc15', '#fde047', '#a3e635', '#4ade80', '#2dd4bf', '#38bdf8', '#60a5fa', '#c084fc',
+  '#f472b6', '#fb7185', '#fb923c', '#d1d5db',
+];
 // Kalınlıklar PDF noktası (pt) cinsinden. Hazır seçenekler + kaydırıcıyla ince ayar.
 const SIZES = {
   pen: { presets: [0.5, 0.8, 1.2, 1.6, 2.2, 3, 4.5, 6], min: 0.3, max: 8, step: 0.1, label: 'Kalem kalınlığı' },
@@ -60,6 +70,20 @@ settings.eraserSize ??= 1;
 settings.favorites ??= [];
 settings.textColor ??= 0;
 settings.textSize ??= 1;
+// Araç çubuğundaki 5'er renk kutusu değiştirilebilir (renk seçiciden); dizi yerinde güncellenir.
+settings.penPalette ??= DEFAULT_PEN_COLORS.slice();
+settings.hlPalette ??= DEFAULT_HL_COLORS.slice();
+const PEN_COLORS = settings.penPalette;
+const HL_COLORS = settings.hlPalette;
+// Favoriler eskiden renk sırasını tutuyordu; renk kutuları artık değişebildiği için rengin kendisini tut.
+settings.favorites = settings.favorites.map((f) => (f.hex ? f : { ...f, hex: (f.tool === 'hl' ? DEFAULT_HL_COLORS : DEFAULT_PEN_COLORS)[f.color] }));
+// Ayarlar ekranından açılıp kapatılabilen özellikler (varsayılan: açık)
+settings.gestureUndo ??= true; // iki parmakla dokun = geri al
+settings.gestureRedo ??= true; // üç parmakla dokun = yinele
+settings.shapeSnap ??= true; // kalemi bekletince şekle dönüştür
+settings.pressure ??= true; // kalem basıncına göre kalınlık
+settings.penButtonEraser ??= true; // kalemin düğmesi basılıyken silgi
+settings.backupReminder ??= true; // kitaplıkta yedek hatırlatıcısı (library.js okur)
 const TEXT_SIZES = [
   { size: 12, label: 'Küçük' },
   { size: 16, label: 'Normal' },
@@ -143,6 +167,7 @@ export async function closeEditor() {
   const e = ed;
   if (sizePop) closeSizePop();
   if (favPop) closeFavPop();
+  closeColorPop();
   commitText();
   clearSelection();
   while (closeOverlays());
@@ -414,11 +439,13 @@ async function pageMenu() {
       { id: 'bookmark', label: ed.views[idx].page.bookmark ? 'Yer imini kaldır' : 'Yer imi ekle' },
       { id: 'overview', label: 'Tüm sayfalar' },
       ...(Math.abs(ed.zoom - 1) > 0.01 ? [{ id: 'fit', label: 'Sayfayı ekrana sığdır' }] : []),
+      { id: 'settings', label: 'Ayarlar' },
       { id: 'delete', label: 'Bu sayfayı sil', danger: true },
     ],
   });
   if (!ed) return;
-  if (action === 'bookmark') toggleBookmark(idx);
+  if (action === 'settings') openSettings();
+  else if (action === 'bookmark') toggleBookmark(idx);
   else if (action === 'fit') zoomBy(1 / ed.zoom);
   else if (action === 'paste') pasteClipboard(idx);
   else if (action === 'add') addPageDialog(idx);
@@ -871,6 +898,7 @@ function updateToolbar() {
       };
       colors.append(b);
     });
+    colors.append(moreColorsButton('text'));
     TEXT_SIZES.forEach((t, i) => {
       const b = document.createElement('button');
       b.className = 'chip' + (settings.textSize === i ? ' active' : '');
@@ -899,6 +927,7 @@ function updateToolbar() {
       };
       colors.append(b);
     });
+    colors.append(moreColorsButton(tool));
     const b = document.createElement('button');
     b.className = 'size-btn' + (sizePop ? ' active' : '');
     b.id = 'tb-size';
@@ -909,6 +938,7 @@ function updateToolbar() {
   }
   if (favPop && (tool === 'eraser' || tool === 'lasso' || tool === 'text')) closeFavPop();
   if (sizePop && sizePop.dataset.tool !== tool) closeSizePop();
+  if (colorPop && (tool === 'eraser' || tool === 'lasso')) closeColorPop();
   else renderSizePop(); // renk değiştiyse önizleme de güncellensin
   $('tb-finger').classList.toggle('active', settings.fingerDraw);
   $('tb-undo').disabled = !ed?.undo.length;
@@ -1128,7 +1158,8 @@ function onDown(e) {
   capture(e.pointerId);
   const v = pageEl._view;
   const rect = pageEl.getBoundingClientRect();
-  const penButton = e.pointerType === 'pen' && (e.button === 5 || e.button === 2 || (e.buttons & 32) || (e.buttons & 2));
+  const penButton =
+    settings.penButtonEraser && e.pointerType === 'pen' && (e.button === 5 || e.button === 2 || (e.buttons & 32) || (e.buttons & 2));
   const base = { id: e.pointerId, v, rect, k: v.page.w / rect.width, cursor: null };
   const at = pagePoint(e, base);
 
@@ -1205,7 +1236,7 @@ function onUp(e) {
 function addPoint(ev, force) {
   const a = active;
   const { x, y } = pagePoint(ev);
-  let p = ev.pointerType === 'pen' ? ev.pressure : 0.5;
+  let p = ev.pointerType === 'pen' && settings.pressure ? ev.pressure : 0.5;
   if (!(p > 0)) p = 0.3;
   const pts = a.stroke.pts;
   const n = pts.length;
@@ -1220,7 +1251,7 @@ function addPoint(ev, force) {
 // Kalem bir yerde bekletilirse (SHAPE_HOLD_MS) çizgiyi düzgün şekle çevir.
 function holdCheck(ev) {
   const a = active;
-  if (!a || a.kind !== 'ink' || a.snapped) return;
+  if (!a || a.kind !== 'ink' || a.snapped || !settings.shapeSnap) return;
   const h = a.hold;
   if (h && Math.hypot(ev.clientX - h.x, ev.clientY - h.y) <= 4) return;
   clearTimeout(h?.timer);
@@ -1533,7 +1564,7 @@ function pickSelectionColor(anchor) {
   return new Promise((resolve) => {
     const pop = document.createElement('div');
     pop.className = 'color-pop';
-    for (const c of [...PEN_COLORS, ...HL_COLORS]) {
+    for (const c of [...new Set([...PEN_COLORS, ...PEN_PRESETS, ...HL_COLORS])]) {
       const b = document.createElement('button');
       b.className = 'swatch';
       b.style.setProperty('--c', c);
@@ -1556,11 +1587,137 @@ function pickSelectionColor(anchor) {
   });
 }
 
+/* ---------------- Renk seçici ---------------- */
+
+const paletteKey = (tool) => (tool === 'hl' ? 'hlColor' : tool === 'text' ? 'textColor' : 'penColor');
+const paletteOf = (tool) => (tool === 'hl' ? HL_COLORS : PEN_COLORS);
+
+// Aracın rengini ayarla: renk kutularında varsa onu seç, yoksa işaretli kutunun yerine koy.
+function setToolColor(tool, hex) {
+  const palette = paletteOf(tool);
+  const key = paletteKey(tool);
+  const i = palette.findIndex((c) => c.toLowerCase() === hex.toLowerCase());
+  if (i >= 0) settings[key] = i;
+  else palette[settings[key]] = hex;
+  saveSettings();
+  updateToolbar();
+  styleTextEditor();
+}
+
+let colorPop = null;
+
+function openColorPop(anchor, tool) {
+  closeColorPop();
+  const presets = tool === 'hl' ? HL_PRESETS : PEN_PRESETS;
+  colorPop = document.createElement('div');
+  colorPop.className = 'fav-pop color-picker-pop';
+  colorPop.innerHTML = `<div class="size-head"><b>Renk seç</b></div>
+    <p class="fav-empty">Seçtiğin renk, araç çubuğunda işaretli olan kutunun yerine geçer.</p>
+    <div class="color-grid-pop"></div>
+    <div class="color-pop-foot">
+      <label class="btn custom-color">${icon('palette')}<span>Özel renk…</span><input type="color"></label>
+      <button class="btn ghost" data-a="reset">Varsayılan renkler</button>
+    </div>`;
+  const grid = colorPop.querySelector('.color-grid-pop');
+  const current = currentColor(tool).toLowerCase();
+  for (const c of presets) {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (c.toLowerCase() === current ? ' active' : '');
+    b.style.setProperty('--c', c);
+    b.title = c;
+    b.onclick = () => {
+      setToolColor(tool, c);
+      closeColorPop();
+    };
+    grid.append(b);
+  }
+  const input = colorPop.querySelector('input[type=color]');
+  input.value = current.length === 7 ? current : '#000000';
+  input.addEventListener('change', () => {
+    setToolColor(tool, input.value);
+    closeColorPop();
+  });
+  colorPop.querySelector('[data-a=reset]').onclick = () => {
+    const defaults = tool === 'hl' ? DEFAULT_HL_COLORS : DEFAULT_PEN_COLORS;
+    paletteOf(tool).splice(0, 5, ...defaults);
+    saveSettings();
+    updateToolbar();
+    closeColorPop();
+    ui.toast('Renkler varsayılana döndü');
+  };
+  // Yazı kutusu açıkken renge dokunmak kutuyu kapatmasın (odak kutuda kalsın).
+  colorPop.addEventListener('pointerdown', (e) => {
+    if (textEdit && !e.target.closest('input, label')) e.preventDefault();
+  });
+  document.body.append(colorPop);
+  const r = anchor.getBoundingClientRect();
+  colorPop.style.left = clamp(r.left + r.width / 2 - colorPop.offsetWidth / 2, 8, window.innerWidth - colorPop.offsetWidth - 8) + 'px';
+  colorPop.style.top = r.bottom + 8 + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', onOutsideColorPop, true), 0);
+}
+
+function onOutsideColorPop(e) {
+  if (!colorPop || colorPop.contains(e.target) || e.target.closest?.('#tb-more-colors')) return;
+  closeColorPop();
+}
+
+function closeColorPop() {
+  document.removeEventListener('pointerdown', onOutsideColorPop, true);
+  colorPop?.remove();
+  colorPop = null;
+}
+
+function moreColorsButton(tool) {
+  const b = document.createElement('button');
+  b.className = 'icon more-colors';
+  b.id = 'tb-more-colors';
+  b.title = 'Daha fazla renk';
+  b.innerHTML = icon('plus');
+  b.onclick = () => (colorPop ? closeColorPop() : openColorPop(b, tool));
+  return b;
+}
+
+/* ---------------- Ayarlar ---------------- */
+
+export function openSettings({ onClose } = {}) {
+  const change = (key, value) => {
+    settings[key] = value;
+    saveSettings();
+    if (ed) updateToolbar();
+  };
+  ui.settingsModal({
+    title: 'Ayarlar',
+    groups: [
+      {
+        title: 'Dokunma hareketleri',
+        items: [
+          { key: 'gestureUndo', label: 'İki parmakla dokun: geri al', desc: 'Kapalıyken elin ekrana değince yanlışlıkla geri almaz.', value: settings.gestureUndo },
+          { key: 'gestureRedo', label: 'Üç parmakla dokun: yinele', value: settings.gestureRedo },
+          { key: 'fingerDraw', label: 'Parmakla çizim', desc: 'Açıkken parmak da çizer; kapalıyken parmak sayfayı kaydırır.', value: settings.fingerDraw },
+        ],
+      },
+      {
+        title: 'Kalem',
+        items: [
+          { key: 'pressure', label: 'Basınca duyarlı kalınlık', desc: 'Kapalıyken çizgi her yerde aynı kalınlıkta olur.', value: settings.pressure },
+          { key: 'shapeSnap', label: 'Bekletince şekle dönüştür', desc: 'Çizginin sonunda kalemi bekletince düz çizgi, daire, dikdörtgen olur.', value: settings.shapeSnap },
+          { key: 'penButtonEraser', label: 'Kalem düğmesi silgi olsun', desc: 'Kalemin yan düğmesine basılıyken silgi gibi siler.', value: settings.penButtonEraser },
+        ],
+      },
+      {
+        title: 'Kitaplık',
+        items: [{ key: 'backupReminder', label: 'Yedek hatırlatıcısı', desc: 'Değişiklik varsa 3 günde bir yedek almayı hatırlatır.', value: settings.backupReminder }],
+      },
+    ],
+    onChange: change,
+  }).then(() => onClose?.());
+}
+
 /* ---------------- Favori kalemler ---------------- */
 
 let favPop = null;
 
-const favKey = (f) => `${f.tool}|${f.color}|${f.size}`;
+const favKey = (f) => `${f.tool}|${f.hex}|${f.size}`;
 
 function openFavPop(anchor) {
   favPop = document.createElement('div');
@@ -1576,14 +1733,14 @@ function openFavPop(anchor) {
 
 function renderFavPop() {
   if (!favPop) return;
-  const cur = { tool: settings.tool, color: settings.tool === 'hl' ? settings.hlColor : settings.penColor, size: sizeOf(settings.tool) };
+  const cur = { tool: settings.tool, hex: currentColor(settings.tool), size: sizeOf(settings.tool) };
   const favs = settings.favorites;
   favPop.innerHTML = `<div class="size-head"><b>Favori kalemler</b></div><div class="fav-list"></div>
     <button class="btn fav-add">${icon('plus')}<span>Şu anki kalemi ekle</span></button>`;
   const list = favPop.querySelector('.fav-list');
   if (!favs.length) list.innerHTML = '<p class="fav-empty">Sık kullandığın renk ve kalınlığı buraya ekle, tek dokunuşla geç.</p>';
   favs.forEach((f, i) => {
-    const color = (f.tool === 'hl' ? HL_COLORS : PEN_COLORS)[f.color];
+    const color = f.hex;
     const name = f.tool === 'hl' ? 'Fosforlu' : 'Kalem';
     const item = document.createElement('div');
     item.className = 'fav' + (favKey(f) === favKey(cur) ? ' active' : '');
@@ -1591,14 +1748,9 @@ function renderFavPop() {
       <button class="fav-del" title="Favorilerden çıkar">${icon('close')}</button>`;
     item.querySelector('.fav-use').onclick = () => {
       settings.tool = f.tool;
-      if (f.tool === 'hl') {
-        settings.hlColor = f.color;
-        settings.hlSize = f.size;
-      } else {
-        settings.penColor = f.color;
-        settings.penSize = f.size;
-      }
-      saveSettings();
+      if (f.tool === 'hl') settings.hlSize = f.size;
+      else settings.penSize = f.size;
+      setToolColor(f.tool, f.hex);
       closeFavPop();
     };
     item.querySelector('.fav-del').onclick = () => {
@@ -1705,12 +1857,13 @@ function endTouch(e) {
     }
     if (!t.moved && t.max >= 2 && performance.now() - t.start <= TAP_MAX_MS) {
       pinch = null;
+      // Ayarlardan kapatıldıysa dokunuş hiçbir şey yapmaz (eli yanlışlıkla değince geri almasın).
       if (t.max === 2) {
-        if (ed.undo.length) {
+        if (settings.gestureUndo && ed.undo.length) {
           undo();
           ui.toast('Geri alındı');
         }
-      } else if (ed.redo.length) {
+      } else if (settings.gestureRedo && ed.redo.length) {
         redo();
         ui.toast('Yinelendi');
       }

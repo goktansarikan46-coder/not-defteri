@@ -1,6 +1,6 @@
 import { initLibrary, currentFolder, showFolder } from './library.js';
 import { APP_VERSION } from './util.js';
-import { initEditor, openEditor, closeEditor, isEditorOpen, closeOverlays } from './editor.js';
+import { initEditor, openEditor, closeEditor, isEditorOpen, closeOverlays, openSettings } from './editor.js';
 import { toast } from './ui.js';
 
 const libraryEl = document.getElementById('library');
@@ -31,7 +31,7 @@ window.addEventListener('popstate', async (e) => {
   showFolder(e.state?.folder);
 });
 
-initLibrary({ onOpenNotebook: showNotebook });
+initLibrary({ onOpenNotebook: showNotebook, onOpenSettings: openSettings });
 initEditor({ onBack: () => history.back() });
 
 // Uygulama her açılışta kitaplığın başında başlar. Dokunuş olmadan geçmişe adım eklemek (eski davranış)

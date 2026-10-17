@@ -148,6 +148,40 @@ export function templatePicker({ title, ok = 'Ekle', withPosition = false }) {
   }, 'wide');
 }
 
+// Açma-kapama düğmeli ayarlar listesi. items: [{ key, label, desc, value }], groups ile başlık eklenebilir.
+// Her değişiklikte onChange(key, value) çağrılır; extra: listenin altına eklenecek düğmeler [{ label, onClick }].
+export function settingsModal({ title, groups, onChange, extra = [] }) {
+  return modal((box, close) => {
+    box.append(el('h3', '', title));
+    const list = el('div', 'settings-list');
+    for (const g of groups) {
+      if (g.title) list.append(el('div', 'settings-group', g.title));
+      for (const it of g.items) {
+        const row = el('label', 'setting');
+        const text = el('span', 'setting-text');
+        text.append(el('b', '', it.label));
+        if (it.desc) text.append(el('small', '', it.desc));
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'switch';
+        input.checked = !!it.value;
+        input.onchange = () => onChange(it.key, input.checked);
+        row.append(text, input);
+        list.append(row);
+      }
+    }
+    box.append(list);
+    const buttons = extra.map((x) => {
+      const b = el('button', 'btn', x.label);
+      b.onclick = () => x.onClick(b);
+      return b;
+    });
+    const done = el('button', 'btn primary', 'Tamam');
+    done.onclick = () => close(true);
+    box.append(buttonRow([...buttons, done]));
+  }, 'wide settings');
+}
+
 export function colorPicker({ title, colors, selected }) {
   return modal((box, close) => {
     const grid = el('div', 'color-grid');

@@ -232,6 +232,45 @@ button { font: inherit; color: inherit; cursor: pointer; }
   user-select: text; -webkit-user-select: text;
 }
 
+/* Ayarlar */
+.btn.icon-only { padding: 9px 11px; }
+.btn.icon-only .i { width: 20px; height: 20px; }
+.modal.settings { max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
+.settings-list { overflow: auto; margin: 0 -8px; padding: 0 8px; }
+.settings-group {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); margin: 18px 0 6px;
+}
+.settings-group:first-child { margin-top: 4px; }
+.setting {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.setting-text { display: flex; flex-direction: column; gap: 2px; }
+.setting-text b { font-weight: 550; }
+.setting-text small { color: var(--muted); font-size: 13px; }
+.switch {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; margin: 0;
+  width: 46px; height: 28px; border-radius: 999px; background: var(--line); cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
+}
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(18px); }
+
+/* Daha fazla renk */
+.toolbar .icon.more-colors { width: 34px; height: 34px; border: 1.5px dashed var(--line); border-radius: 50%; margin-left: 2px; }
+.toolbar .icon.more-colors .i { width: 16px; height: 16px; }
+.color-picker-pop { width: 360px; }
+.color-pop-foot .btn { white-space: nowrap; }
+.color-grid-pop { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin: 10px 0 12px; }
+.color-pop-foot { display: flex; justify-content: space-between; gap: 8px; }
+.custom-color { position: relative; cursor: pointer; }
+.custom-color input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
 /* Şablon seçici */
 .modal.wide { width: min(560px, 100%); }
 .tpl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }

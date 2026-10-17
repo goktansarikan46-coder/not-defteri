@@ -36,8 +36,10 @@ export function showFolder(id) {
   renderLibrary();
 }
 
-export function initLibrary({ onOpenNotebook }) {
+export function initLibrary({ onOpenNotebook, onOpenSettings }) {
   openNotebook = onOpenNotebook;
+  $('btn-settings').innerHTML = icon('gear');
+  $('btn-settings').addEventListener('click', () => onOpenSettings({ onClose: renderLibrary }));
   $('lib-search-icon').innerHTML = icon('search');
   let searchTimer = 0;
   $('lib-search').addEventListener('input', () => {
@@ -327,9 +329,10 @@ async function renderBackupHint(notebooks) {
   const changed = notebooks.filter((n) => n.updatedAt > at).length;
   const days = (Date.now() - at) / 86_400_000;
   const snoozed = Date.now() < (loadJSON('nd-backup-snooze', { until: 0 }).until || 0);
+  const enabled = loadJSON('nd-tools', { backupReminder: true }).backupReminder !== false; // Ayarlar'dan kapatılabilir
   const persistent = await storageIsPersistent();
   const needsBackup = notebooks.length > 0 && changed > 0 && (!at || days >= BACKUP_REMIND_DAYS);
-  const show = !snoozed && (needsBackup || (!persistent && notebooks.length > 0));
+  const show = enabled && !snoozed && (needsBackup || (!persistent && notebooks.length > 0));
   hint.classList.toggle('hidden', !show);
   if (!show) return;
   const parts = [];
