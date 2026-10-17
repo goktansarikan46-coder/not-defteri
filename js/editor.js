@@ -340,6 +340,9 @@ class PageView {
 
 function buildPages() {
   sheetEl.innerHTML = '';
+  pullEl = document.createElement('div');
+  pullEl.className = 'pull-add';
+  sheetEl.append(pullEl);
   ed.io = new IntersectionObserver(onIntersect, { root: pagesEl, rootMargin: '60% 0px' });
   for (const page of ed.nb.pages) {
     const v = new PageView(page);
@@ -468,7 +471,7 @@ async function insertBlank(index, template = 'blank') {
   ed.ink.set(page.id, []);
   const v = new PageView(page);
   if (index < ed.views.length) ed.views[index].el.before(v.el);
-  else sheetEl.append(v.el);
+  else ed.views[index - 1].el.after(v.el);
   ed.views.splice(index, 0, v);
   layout();
   ed.io.observe(v.el);
@@ -1791,6 +1794,9 @@ let tap = null; // { start, max, moved, zoom, origins: Map }
 function startTouch(e) {
   capture(e.pointerId);
   stopInertia();
+  setPull(0);
+  // Çekme yalnızca parmak zaten en alttayken konduysa başlar; hızlı kaydırırken sona çarpmak sayfa eklemesin.
+  if (touches.size === 0) pullArmed = isAtBottom();
   if (touches.size === 0) tap = { start: performance.now(), max: 0, moved: false, zoom: ed.zoom, origins: new Map() };
   if (tap) {
     tap.origins.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1831,6 +1837,15 @@ function moveTouch(e) {
   } else if (touches.size === 1) {
     const dx = cur.x - prev.x;
     const dy = cur.y - prev.y;
+    // Son sayfanın sonundayken parmak yukarı çekmeye devam ederse "yeni sayfa" çekmesi başlar.
+    if (pull > 0 || (pullArmed && dy < 0 && isAtBottom())) {
+      setPull(Math.max(0, pull - dy));
+      if (pull > 0) {
+        pagesEl.scrollLeft -= dx;
+        velSamples = [];
+        return;
+      }
+    }
     pagesEl.scrollLeft -= dx;
     pagesEl.scrollTop -= dy;
     const t = performance.now();
@@ -1878,11 +1893,42 @@ function endTouch(e) {
     return;
   }
   if (touches.size) return;
+  if (pull > 0) {
+    const enough = pull >= PULL_ADD_PX;
+    setPull(0);
+    if (enough) addPageAtEnd();
+    return;
+  }
   const t = performance.now();
   const recent = velSamples.filter((s) => t - s.t < 100);
   if (recent.length < 2) return;
   const dt = Math.max(16, t - recent[0].t);
   startInertia(recent.reduce((s, r) => s + r.dx, 0) / dt, recent.reduce((s, r) => s + r.dy, 0) / dt);
+}
+
+// Sona çekerek sayfa ekleme (diğer not uygulamalarındaki gibi)
+const PULL_ADD_PX = 110; // bu kadar çekip bırakınca sayfa eklenir
+let pull = 0;
+let pullEl = null;
+let pullArmed = false;
+const isAtBottom = () => pagesEl.scrollTop >= pagesEl.scrollHeight - pagesEl.clientHeight - 2;
+
+function setPull(px) {
+  pull = px;
+  if (!pullEl) return;
+  const ready = pull >= PULL_ADD_PX;
+  pullEl.classList.toggle('show', pull > 0);
+  pullEl.classList.toggle('ready', ready);
+  pullEl.textContent = ready ? 'Bırak: yeni sayfa eklenecek' : 'Yeni sayfa için çekmeye devam et';
+  // Sayfalar parmağı biraz takip etsin (lastik etkisi)
+  sheetEl.style.transform = pull > 0 ? `translateY(${-Math.min(pull, PULL_ADD_PX * 1.4) * 0.45}px)` : '';
+}
+
+function addPageAtEnd() {
+  const last = ed.nb.pages[ed.nb.pages.length - 1];
+  // Son sayfa boş bir sayfaysa aynı şablon; PDF'in sonundaysa en son seçilen şablon
+  const template = last.kind === 'pdf' ? loadJSON('nd-template', { template: 'blank' }).template : last.template || 'blank';
+  insertBlank(ed.nb.pages.length, template);
 }
 
 function startInertia(vx, vy) {

@@ -232,6 +232,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
   user-select: text; -webkit-user-select: text;
 }
 
+/* Sona çekerek sayfa ekleme */
+.pull-add {
+  position: absolute; left: 50%; bottom: calc(60px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  padding: 8px 16px; border-radius: 999px; font-size: 14px; white-space: nowrap; pointer-events: none;
+  background: var(--surface); color: var(--muted); border: 1px dashed var(--line);
+  opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.pull-add.show { opacity: 1; }
+.pull-add.ready { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* Ayarlar */
 .btn.icon-only { padding: 9px 11px; }
 .btn.icon-only .i { width: 20px; height: 20px; }
