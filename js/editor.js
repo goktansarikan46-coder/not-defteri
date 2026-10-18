@@ -203,6 +203,8 @@ class PageView {
     this.resKey = null;
     this.seq = 0;
     this.task = null;
+    this.sharp = null;
+    this.sharpSeq = 0;
     this.el = document.createElement('div');
     this.el.className = 'page';
     this.el._view = this;
@@ -291,6 +293,7 @@ class PageView {
     this.task?.cancel();
     this.task = null;
     this.resKey = null;
+    this.dropSharp();
     if (this.bg) this.bg.width = this.bg.height = 0;
     this.ink.width = this.ink.height = 0;
     // pdf.js'in bu sayfa için tuttuğu yazı tipi / resim verilerini de bırak.
@@ -323,20 +326,177 @@ class PageView {
     if (!this.strokes?.length) {
       // Not kalmadıysa katmanı bellekten tamamen bırak.
       if (this.ink.width) this.ink.width = this.ink.height = 0;
+      this.drawSharpInk(null);
       return;
     }
     if (!this.ensureInk()) return;
     const ctx = this.ink.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.ink.width, this.ink.height);
-    drawStrokes(this.inkContext(), exclude ? this.strokes.filter((s) => !exclude.has(s)) : this.strokes);
+    const list = exclude ? this.strokes.filter((s) => !exclude.has(s)) : this.strokes;
+    drawStrokes(this.inkContext(), list);
+    this.drawSharpInk(list);
   }
 
   addStroke(s) {
-    if (this.ink.width) drawStroke(this.inkContext(), s);
-    else this.drawInk();
+    if (!this.ink.width) return this.drawInk();
+    drawStroke(this.inkContext(), s);
+    if (this.sharp?.ink.width) drawStroke(sharpContext(this.sharp.ink, this.sharp), s);
+    else this.drawSharpInk(this.strokes);
+  }
+
+  /* --- Keskin katman ---
+     Bellek sınırı yüzünden büyük ya da yakınlaştırılmış sayfalar ekrandan düşük çözünürlükte çizilir;
+     büyütülünce yazılar pikselli görünür. Böyle bir sayfada yalnızca ekranda görünen kısım, ekranın tam
+     çözünürlüğünde ayrı tuvallere (arka plan + yazılar) bir kez daha çizilir. Düşük çözünürlüklü tam sayfa
+     altta kalır: kaydırırken yeni açılan yerler hemen görünür, kaydırma durunca keskinleşir. */
+
+  needsSharp() {
+    if (!this.visible || !this.inkSize) return false;
+    return this.inkSize.w / this.page.w < ed.pxPerPt * (window.devicePixelRatio || 1) * 0.97;
+  }
+
+  renderSharp() {
+    const view = this.needsSharp() && visibleRegion(this, 0);
+    if (!view) return this.dropSharp();
+    const S = ed.pxPerPt * (window.devicePixelRatio || 1);
+    const sh = this.sharp;
+    // Keskin alan ekranda görüneni hâlâ kapsıyorsa yeniden çizmeye gerek yok.
+    if (sh && sh.S === S && view.x * S >= sh.ox && view.y * S >= sh.oy &&
+        (view.x + view.w) * S <= sh.ox + sh.cw && (view.y + view.h) * S <= sh.oy + sh.ch) return;
+    const region = regionAt(visibleRegion(this, 0.2), S);
+    const seq = ++this.sharpSeq;
+    this.sharpTask?.cancel();
+    region.ink = sh?.ink || sharpCanvas('ink sharp');
+    region.bg = sh?.bg || null;
+    placeSharp(region.ink, region, this.page);
+    if (!region.ink.isConnected) this.ink.after(region.ink);
+    this.sharp = region;
+    this.drawInk(selectionHidden(this));
+    // Alttaki yazı katmanında keskin alanın yeri boş bırakılır: aynı yazı iki kez çizilip koyulaşmasın.
+    const px = (v) => ((v / S / this.page.w) * 100).toFixed(3) + '%';
+    const py = (v) => ((v / S / this.page.h) * 100).toFixed(3) + '%';
+    const [x0, y0, x1, y1] = [px(region.ox), py(region.oy), px(region.ox + region.cw), py(region.oy + region.ch)];
+    this.ink.style.clipPath = `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x0} ${y0}, ${x1} ${y0}, ${x1} ${y1}, ${x0} ${y1}, ${x0} ${y0})`;
+    if (!this.bg) return; // boş sayfa: arka plan yok
+    const c = sharpCanvas('bg sharp');
+    c.width = region.cw;
+    c.height = region.ch;
+    const swapIn = () => {
+      if (seq !== this.sharpSeq) return (c.width = c.height = 0);
+      placeSharp(c, region, this.page);
+      if (region.bg) {
+        region.bg.replaceWith(c);
+        region.bg.width = region.bg.height = 0;
+      } else this.ink.before(c);
+      region.bg = c;
+    };
+    if (this.page.kind !== 'pdf') {
+      // Şablonun altı opak olmalı ki alttaki çizgilerle üst üste binip koyulaşmasın.
+      const ctx = sharpContext(c, region);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(region.ox / S, region.oy / S, region.cw / S, region.ch / S);
+      drawTemplate(ctx, this.page);
+      return swapIn();
+    }
+    if (!ed.pdf) return;
+    const job = async () => {
+      if (seq !== this.sharpSeq || !ed?.pdf) return (c.width = c.height = 0);
+      try {
+        this.pp ??= await ed.pdf.getPage(this.page.pdfPage);
+        if (seq !== this.sharpSeq) return (c.width = c.height = 0);
+        this.sharpTask = this.pp.render({
+          canvasContext: c.getContext('2d'),
+          viewport: this.pp.getViewport({ scale: S }),
+          transform: [1, 0, 0, 1, -region.ox, -region.oy],
+        });
+        await this.sharpTask.promise;
+        swapIn();
+      } catch (err) {
+        c.width = c.height = 0;
+        if (err?.name !== 'RenderingCancelledException') console.error(err);
+      } finally {
+        this.sharpTask = null;
+      }
+    };
+    pdfQueue = pdfQueue.then(job, job);
+  }
+
+  drawSharpInk(list) {
+    const sh = this.sharp;
+    if (!sh) return;
+    if (!list?.length) {
+      if (sh.ink.width) sh.ink.width = sh.ink.height = 0; // yazı yoksa bellekte yer tutmasın
+      return;
+    }
+    if (sh.ink.width !== sh.cw || sh.ink.height !== sh.ch) {
+      sh.ink.width = sh.cw;
+      sh.ink.height = sh.ch;
+    } else {
+      const ctx = sh.ink.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, sh.cw, sh.ch);
+    }
+    drawStrokes(sharpContext(sh.ink, sh), list);
+  }
+
+  dropSharp() {
+    this.sharpSeq++;
+    this.sharpTask?.cancel();
+    this.sharpTask = null;
+    if (!this.sharp) return;
+    for (const c of [this.sharp.ink, this.sharp.bg]) {
+      if (!c) continue;
+      c.remove();
+      c.width = c.height = 0;
+    }
+    this.sharp = null;
+    this.ink.style.clipPath = '';
   }
 }
+
+// Sayfanın ekranda görünen kısmı (sayfa noktası cinsinden); pad: kaydırmaya karşı ekranın bu oranı kadar pay.
+function visibleRegion(v, pad) {
+  const pr = v.el.getBoundingClientRect();
+  const vr = pagesEl.getBoundingClientRect();
+  const mx = vr.width * pad, my = vr.height * pad;
+  const x0 = Math.max(pr.left, vr.left - mx), x1 = Math.min(pr.right, vr.right + mx);
+  const y0 = Math.max(pr.top, vr.top - my), y1 = Math.min(pr.bottom, vr.bottom + my);
+  if (x1 <= x0 || y1 <= y0) return null;
+  const k = v.page.w / pr.width;
+  return { x: (x0 - pr.left) * k, y: (y0 - pr.top) * k, w: (x1 - x0) * k, h: (y1 - y0) * k };
+}
+
+// Bölgeyi ekran piksellerine oturt (S: sayfa noktası başına ekran pikseli).
+function regionAt(r, S) {
+  const ox = Math.floor(r.x * S), oy = Math.floor(r.y * S);
+  return { S, ox, oy, cw: Math.ceil((r.x + r.w) * S) - ox, ch: Math.ceil((r.y + r.h) * S) - oy };
+}
+
+function sharpCanvas(className) {
+  const c = document.createElement('canvas');
+  c.className = className;
+  return c;
+}
+
+// Keskin tuval sayfanın içine yüzde ile yerleşir: yakınlaştırırken sayfayla birlikte büyür.
+function placeSharp(c, r, page) {
+  const pct = (v, total) => ((v / r.S / total) * 100).toFixed(3) + '%';
+  Object.assign(c.style, { inset: 'auto', left: pct(r.ox, page.w), top: pct(r.oy, page.h), width: pct(r.cw, page.w), height: pct(r.ch, page.h) });
+}
+
+function sharpContext(c, r) {
+  const ctx = c.getContext('2d');
+  ctx.setTransform(r.S, 0, 0, r.S, -r.ox, -r.oy);
+  return ctx;
+}
+
+let sharpTimer = 0;
+function scheduleSharp() {
+  clearTimeout(sharpTimer);
+  sharpTimer = setTimeout(() => ed?.views.forEach((v) => v.visible && v.renderSharp()), 150);
+}
+
 
 function buildPages() {
   sheetEl.innerHTML = '';
@@ -360,6 +520,7 @@ function onIntersect(entries) {
     if (v.visible) v.render();
     else v.release();
   }
+  scheduleSharp();
 }
 
 function layout() {
@@ -384,6 +545,7 @@ function scheduleRerender() {
   ed.renderTimer = setTimeout(() => {
     if (!ed) return;
     for (const v of ed.views) if (v.visible) v.render();
+    scheduleSharp();
   }, 180);
 }
 
@@ -1136,6 +1298,7 @@ function bindInput() {
   );
   pagesEl.addEventListener('scroll', () => {
     if (!indicatorRaf) indicatorRaf = requestAnimationFrame(updateIndicator);
+    if (ed) scheduleSharp();
   });
   document.addEventListener('keydown', (e) => {
     if (!ed || !(e.ctrlKey || e.metaKey) || e.target.closest?.('input')) return;
@@ -1350,8 +1513,21 @@ function finishActive() {
   }
 }
 
+let liveRegion = null; // canlı katmanın sayfadaki yeri ve ölçeği
 function attachLive(v) {
-  const { w, h } = v.inkSize || v.targetSize(); // canlı katman da aynı boyut sınırına uyar
+  let w, h;
+  const view = v.needsSharp() && visibleRegion(v, 0);
+  if (view) {
+    // Büyük / yakınlaştırılmış sayfa: canlı katman yalnızca görünen kısmı, ekranın tam çözünürlüğünde kaplar.
+    liveRegion = regionAt(view, ed.pxPerPt * (window.devicePixelRatio || 1));
+    placeSharp(liveCanvas, liveRegion, v.page);
+    w = liveRegion.cw;
+    h = liveRegion.ch;
+  } else {
+    ({ w, h } = v.inkSize || v.targetSize()); // canlı katman da aynı boyut sınırına uyar
+    liveRegion = { S: w / v.page.w, ox: 0, oy: 0 };
+    liveCanvas.style.cssText = '';
+  }
   if (liveCanvas.width !== w || liveCanvas.height !== h) {
     liveCanvas.width = w;
     liveCanvas.height = h;
@@ -1374,8 +1550,7 @@ function drawLive() {
   const ctx = liveCanvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-  const k = liveCanvas.width / active.v.page.w;
-  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.setTransform(liveRegion.S, 0, 0, liveRegion.S, -liveRegion.ox, -liveRegion.oy);
   if (active.kind === 'ink') drawStroke(ctx, active.stroke);
   if (active.kind === 'erase' && active.cursor) {
     ctx.beginPath();
