@@ -746,7 +746,14 @@ function markDirty(pageId) {
   ed.dirty.add(pageId);
   ed.changed = true;
   clearTimeout(ed.saveTimer);
-  ed.saveTimer = setTimeout(flushSaves, 300); // kısa gecikme: hızlı yazarken her çizgide diske yazmayalım
+  // Kısa bir duraklamadan sonra kaydet. Kayıt sırasında sayfanın tüm çizgileri kopyalandığı için
+  // kalem / silgi o an kullanılıyorsa beklenir: yazarken ya da araç değiştirirken takılma olmasın.
+  // (Uygulamadan çıkılırken ve defter kapanırken beklemeden kaydedilir.)
+  ed.saveTimer = setTimeout(function trySave() {
+    if (!ed) return;
+    if (active) ed.saveTimer = setTimeout(trySave, 400);
+    else flushSaves();
+  }, 800);
 }
 
 async function flushSaves() {
@@ -784,11 +791,13 @@ function buildToolbar() {
     <button class="icon" id="tb-back" title="Kitaplığa dön">${icon('back')}</button>
     <button class="doc-title" id="tb-title" title="Adı değiştir"></button>
     <span class="sep"></span>
+    <div class="tools-pill">
     <button class="icon tool" data-tool="pen" title="Kalem">${icon('pen')}</button>
     <button class="icon tool" data-tool="hl" title="Fosforlu kalem">${icon('highlighter')}</button>
     <button class="icon tool" data-tool="eraser" title="Silgi">${icon('eraser')}</button>
     <button class="icon tool" data-tool="lasso" title="Kement: çevresini çizerek seç, taşı, büyüt, sil">${icon('lasso')}</button>
     <button class="icon tool" data-tool="text" title="Metin kutusu: sayfaya dokun ve yaz">${icon('text')}</button>
+    </div>
     <span class="sep"></span>
     <div class="group" id="tb-colors"></div>
     <div class="group" id="tb-widths"></div>
@@ -944,6 +953,11 @@ function updateToolbar() {
   if (colorPop && (tool === 'eraser' || tool === 'lasso')) closeColorPop();
   else renderSizePop(); // renk değiştiyse önizleme de güncellensin
   $('tb-finger').classList.toggle('active', settings.fingerDraw);
+  updateHistoryButtons();
+}
+
+// Her çizgiden sonra yalnızca geri al / yinele düğmeleri güncellenir (bütün araç çubuğu yeniden kurulmaz).
+function updateHistoryButtons() {
   $('tb-undo').disabled = !ed?.undo.length;
   $('tb-redo').disabled = !ed?.redo.length;
 }
@@ -1052,7 +1066,7 @@ function pushUndo(op) {
   ed.undo.push(op);
   if (ed.undo.length > 300) ed.undo.shift();
   ed.redo.length = 0;
-  updateToolbar();
+  updateHistoryButtons();
 }
 
 function viewById(pageId) {
@@ -1083,7 +1097,7 @@ function undo() {
   clearSelection();
   applyOp(op, true);
   ed.redo.push(op);
-  updateToolbar();
+  updateHistoryButtons();
 }
 
 function redo() {
@@ -1092,7 +1106,7 @@ function redo() {
   clearSelection();
   applyOp(op, false);
   ed.undo.push(op);
-  updateToolbar();
+  updateHistoryButtons();
 }
 
 /* ---------------- Kalem, silgi, parmakla kaydırma ---------------- */
@@ -1301,11 +1315,8 @@ function eraseAtPoint(a, x, y, r) {
       changed = true;
     }
   }
-  if (changed) {
-    a.changed = true;
-    a.v.drawInk();
-    markDirty(a.v.page.id);
-  }
+  // Sayfa her dokunuşta değil, ekran yenilenirken bir kez yeniden çizilir (drawLive); kayıt silgi kalkınca.
+  if (changed) a.changed = a.redraw = true;
 }
 
 function lassoPoint(ev) {
@@ -1319,7 +1330,8 @@ function finishActive() {
   const a = active;
   active = null;
   clearTimeout(a.hold?.timer);
-  liveCanvas.remove();
+  // Canlı katman sayfada kalır, yalnızca temizlenir: her çizgide tuvali sayfaya ekleyip çıkarmak tarayıcıyı yoruyordu.
+  liveCanvas.getContext('2d').clearRect(0, 0, liveCanvas.width, liveCanvas.height);
   const pageId = a.v.page.id;
   if (a.kind === 'ink' && a.stroke.pts.length) {
     a.v.strokes.push(a.stroke);
@@ -1327,6 +1339,8 @@ function finishActive() {
     pushUndo({ type: 'add', pageId, stroke: a.stroke });
     markDirty(pageId);
   } else if (a.kind === 'erase' && a.changed) {
+    if (a.redraw) a.v.drawInk();
+    markDirty(pageId);
     if (settings.eraserMode === 'partial') pushUndo({ type: 'snapshot', pageId, before: a.before, after: a.v.strokes.slice() });
     else pushUndo({ type: 'erase', pageId, items: a.erased });
   } else if (a.kind === 'lasso') {
@@ -1343,7 +1357,7 @@ function attachLive(v) {
     liveCanvas.height = h;
   }
   liveCanvas.getContext('2d').clearRect(0, 0, w, h);
-  v.el.append(liveCanvas);
+  if (liveCanvas.parentNode !== v.el) v.el.append(liveCanvas);
 }
 
 function requestLive() {
@@ -1353,6 +1367,10 @@ function requestLive() {
 function drawLive() {
   liveRaf = 0;
   if (!active) return;
+  if (active.redraw) {
+    active.redraw = false;
+    active.v.drawInk();
+  }
   const ctx = liveCanvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);

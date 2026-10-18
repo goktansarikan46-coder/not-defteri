@@ -125,20 +125,32 @@ export function drawStroke(ctx, s) {
     ctx.fill();
   } else {
     // Kalem: her parça kendi basıncına göre kalınlaşır, orta noktalardan geçen eğrilerle yumuşatılır.
+    // Kalınlığı (gözle fark edilmeyecek kadar) aynı olan ardışık parçalar tek seferde çizilir: sayfayı
+    // yeniden çizmek (silgi, geri alma, kaydırma) böylece çok daha hızlı.
+    const q = Math.max(0.02, s.width * 0.03);
     let mx = p[0], my = p[1];
+    let cur = -1;
+    ctx.beginPath();
+    ctx.moveTo(mx, my);
     for (let i = 1; i < n; i++) {
       const x = p[i * 3], y = p[i * 3 + 1];
       const last = i === n - 1;
       const ex = last ? x : (x + p[i * 3 + 3]) / 2;
       const ey = last ? y : (y + p[i * 3 + 4]) / 2;
-      ctx.lineWidth = widthAt(s, (p[i * 3 + 2] + p[i * 3 - 1]) / 2);
-      ctx.beginPath();
-      ctx.moveTo(mx, my);
+      const lw = Math.round(widthAt(s, (p[i * 3 + 2] + p[i * 3 - 1]) / 2) / q) * q;
+      if (lw !== cur) {
+        if (cur >= 0) {
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(mx, my);
+        }
+        ctx.lineWidth = cur = lw;
+      }
       ctx.quadraticCurveTo(x, y, ex, ey);
-      ctx.stroke();
       mx = ex;
       my = ey;
     }
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -148,10 +160,32 @@ export function drawStrokes(ctx, strokes) {
 }
 
 // Silgi için: nokta bir çizgiye r mesafeden yakın mı?
+// Çizgilerin sınır kutusu bir kez hesaplanıp saklanır; silgi uzaktaki çizgileri tek karşılaştırmayla eler.
+// (WeakMap: çizginin kendisine alan eklenmez, kayıtlara / yedeğe girmez.)
+const boundsCache = new WeakMap();
+function boundsOf(s) {
+  let b = boundsCache.get(s);
+  if (!b) {
+    const p = s.pts;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < p.length; i += 3) {
+      if (p[i] < x0) x0 = p[i];
+      if (p[i] > x1) x1 = p[i];
+      if (p[i + 1] < y0) y0 = p[i + 1];
+      if (p[i + 1] > y1) y1 = p[i + 1];
+    }
+    b = { x0, y0, x1, y1 };
+    boundsCache.set(s, b);
+  }
+  return b;
+}
+
 export function hitStroke(s, x, y, r) {
   if (isBox(s)) return false; // silgi metin ve resimlere dokunmaz (onlar kementle silinir)
   const p = s.pts;
   const rr = r + s.width / 2;
+  const b = boundsOf(s);
+  if (x < b.x0 - rr || x > b.x1 + rr || y < b.y0 - rr || y > b.y1 + rr) return false;
   const rr2 = rr * rr;
   if (p.length === 3) return (p[0] - x) ** 2 + (p[1] - y) ** 2 <= rr2;
   for (let i = 3; i < p.length; i += 3) {
