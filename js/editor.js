@@ -991,6 +991,7 @@ function buildToolbar() {
         clearSelection();
         commitText();
       }
+      if (active) finishActive(); // yarım kalan silgi / çizgi ekranda takılı kalmasın
       settings.tool = b.dataset.tool;
       saveSettings();
       updateToolbar();
@@ -1327,6 +1328,8 @@ function onDown(e) {
   }
   if (e.pointerType === 'pen') lastPen = now;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
+  // Kalemin kalkışı bazen tablete ulaşmıyor: eski iz (ör. silgi halkası) ekranda takılı kalmasın, yeni dokunuş onu bitirsin.
+  if (active && e.pointerType === 'pen' && e.pointerId !== active.id) finishActive();
   if (active) return;
   const pageEl = e.target.closest('.page');
   if (!pageEl) return;
@@ -1495,7 +1498,9 @@ function finishActive() {
   active = null;
   clearTimeout(a.hold?.timer);
   // Canlı katman sayfada kalır, yalnızca temizlenir: her çizgide tuvali sayfaya ekleyip çıkarmak tarayıcıyı yoruyordu.
-  liveCanvas.getContext('2d').clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+  const lctx = liveCanvas.getContext('2d');
+  lctx.setTransform(1, 0, 0, 1, 0, 0); // son çizimin ölçeği kalmışsa tuvalin bir kısmı silinmeden kalıyordu
+  lctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
   const pageId = a.v.page.id;
   if (a.kind === 'ink' && a.stroke.pts.length) {
     a.v.strokes.push(a.stroke);
