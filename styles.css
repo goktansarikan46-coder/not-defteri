@@ -410,8 +410,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2);
   transition: transform 0.12s;
 }
-/* Seçili renk: rengin kendisinden ince bir halka (iPadOS kalem paleti gibi) */
-.swatch.active::after { transform: scale(0.78); box-shadow: 0 0 0 3px var(--bar), 0 0 0 5px var(--c); }
+/* Seçili renk: beyaz ince bir halka */
+.swatch.active::after { transform: scale(0.78); box-shadow: 0 0 0 3px var(--bar), 0 0 0 5px #fff; }
 .size-btn {
   display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 10px; flex: none;
   border: 0; border-radius: 999px; background: var(--fill); margin-left: 6px;

@@ -84,6 +84,7 @@ settings.shapeSnap ??= true; // kalemi bekletince şekle dönüştür
 settings.pressure ??= true; // kalem basıncına göre kalınlık
 settings.penButtonEraser ??= true; // kalemin düğmesi basılıyken silgi
 settings.backupReminder ??= true; // kitaplıkta yedek hatırlatıcısı (library.js okur)
+settings.pageDrag ??= false; // tüm sayfalar ekranında tutamaktan sürükleyerek sıra değiştirme (varsayılan: kapalı)
 const TEXT_SIZES = [
   { size: 12, label: 'Küçük' },
   { size: 16, label: 'Normal' },
@@ -741,7 +742,7 @@ function openOverview() {
   if (!ed || overview) return;
   const el = document.createElement('div');
   el.className = 'overview';
-  el.innerHTML = `<header class="ov-head"><b>Tüm sayfalar</b><span class="ov-hint">Dokun: sayfaya git · Tutamaktan sürükle: sırayı değiştir</span>
+  el.innerHTML = `<header class="ov-head"><b>Tüm sayfalar</b><span class="ov-hint">Dokun: sayfaya git${settings.pageDrag ? ' · Tutamaktan sürükle: sırayı değiştir' : ''}</span>
     <button class="chip" id="ov-bm">${icon('bookmark')}<span>Yer imleri</span></button>
     <button class="icon" id="ov-close" title="Kapat">${icon('close')}</button></header><div class="ov-grid"></div>`;
   $('editor').append(el);
@@ -772,7 +773,7 @@ function refreshOverview() {
   ed.views.forEach((v, i) => {
     if (filtering && !v.page.bookmark) return;
     const tile = document.createElement('div');
-    tile.className = 'ov-tile' + (i === cur ? ' current' : '') + (v.page.bookmark ? ' bookmarked' : '') + (filtering ? ' no-drag' : '');
+    tile.className = 'ov-tile' + (i === cur ? ' current' : '') + (v.page.bookmark ? ' bookmarked' : '') + (filtering || !settings.pageDrag ? ' no-drag' : '');
     tile.dataset.id = v.page.id;
     tile.innerHTML = `<button class="ov-thumb" style="aspect-ratio:${v.page.w}/${v.page.h}"></button>
       <div class="ov-foot"><button class="ov-grip" title="Sürükleyerek taşı">${icon('grip')}</button>
@@ -1890,6 +1891,7 @@ export function openSettings({ onClose } = {}) {
           { key: 'gestureUndo', label: 'İki parmakla dokun: geri al', desc: 'Kapalıyken elin ekrana değince yanlışlıkla geri almaz.', value: settings.gestureUndo },
           { key: 'gestureRedo', label: 'Üç parmakla dokun: yinele', value: settings.gestureRedo },
           { key: 'fingerDraw', label: 'Parmakla çizim', desc: 'Açıkken parmak da çizer; kapalıyken parmak sayfayı kaydırır.', value: settings.fingerDraw },
+          { key: 'pageDrag', label: 'Sayfaları sürükleyerek taşı', desc: 'Tüm sayfalar ekranında tutamaktan sürükleyip sırayı değiştirir.', value: settings.pageDrag },
         ],
       },
       {
