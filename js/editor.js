@@ -1392,6 +1392,11 @@ function pagePoint(ev, a = active) {
 function onMove(e) {
   if (e.pointerType === 'pen') lastPen = performance.now();
   if (active && e.pointerId === active.id) {
+    // Kalemin kalkışı (pointerup) kaybolursa havadaki hareket çizgi sayılmasın: uç değmiyorsa izi bitir.
+    if (e.pointerType === 'pen' && !(e.buttons & 33)) {
+      finishActive();
+      return;
+    }
     if (active.kind === 'move' || active.kind === 'resize') {
       dragSelection(e);
       return;
