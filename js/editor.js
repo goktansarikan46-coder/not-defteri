@@ -24,6 +24,7 @@ import {
   TEXT_LINE,
   setImageReadyHandler,
   preloadImages,
+  clearImageCache,
 } from './render.js';
 import { recognizeShape } from './shapes.js';
 import { pdfUtil } from './pdf.js';
@@ -125,10 +126,13 @@ export function initEditor(opts) {
   });
   // Uygulamadan çıkılırken (ana ekrana dönme, başka uygulamaya geçme, ekranı kapatma) her şeyi hemen kaydet.
   // Açık bir metin kutusu da kutuya dönüştürülüp kaydedilir: Android uygulamayı arka planda kapatırsa yazı kaybolmasın.
+  // Açık sayfa da kaydedilir: Android uygulamayı kapatırsa defter yine kalınan sayfadan açılsın.
   const saveNow = () => {
     if (!ed) return;
     commitText();
-    flushSaves();
+    ed.nb.lastPage = currentIndex();
+    if (ed.dirty.size) flushSaves();
+    else db.put('notebooks', ed.nb).catch((err) => console.warn('Son sayfa kaydedilemedi', err));
   };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') saveNow();
@@ -192,6 +196,7 @@ export async function closeEditor() {
   for (const v of e.views) v.release();
   sheetEl.innerHTML = '';
   e.pdf?.destroy();
+  clearImageCache();
   ed = null;
 }
 
@@ -1255,7 +1260,9 @@ function applyOp(op, reverse) {
   markDirty(op.pageId);
 }
 
+// Açık yazı kutusu önce kaydedilir; yoksa geri alma kutunun altındaki sayfayı değiştirir ve yazılan metin kaybolur.
 function undo() {
+  commitText();
   const op = ed?.undo.pop();
   if (!op) return;
   clearSelection();
@@ -1265,6 +1272,7 @@ function undo() {
 }
 
 function redo() {
+  commitText();
   const op = ed?.redo.pop();
   if (!op) return;
   clearSelection();
@@ -1303,7 +1311,7 @@ function bindInput() {
     if (ed) scheduleSharp();
   });
   document.addEventListener('keydown', (e) => {
-    if (!ed || !(e.ctrlKey || e.metaKey) || e.target.closest?.('input')) return;
+    if (!ed || !(e.ctrlKey || e.metaKey) || e.target.closest?.('input, textarea')) return;
     const k = e.key.toLowerCase();
     if (k === 'z' && !e.shiftKey) {
       e.preventDefault();

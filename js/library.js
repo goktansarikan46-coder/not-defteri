@@ -457,8 +457,8 @@ export async function importPdf(blob, fileName = 'Belge.pdf') {
     };
     nb.thumb = await renderThumb(doc, nb.pages[0], []);
     nb.thumbV = THUMB_VERSION;
-    await db.put('files', { id: fileId, name: fileName, blob });
-    await db.put('notebooks', nb);
+    // PDF ve defter tek işlemde yazılır: yer biterse yarım kalan, kitaplıkta görünmeyen bir PDF yer kaplamaz.
+    await db.putMany({ files: [{ id: fileId, name: fileName, blob }], notebooks: [nb] });
     navigator.storage?.persist?.().catch(() => {});
     renderLibrary();
     return nb;

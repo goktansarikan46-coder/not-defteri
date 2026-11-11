@@ -71,6 +71,9 @@ function imageFor(src) {
   return img;
 }
 
+// Defter kapanınca çözülmüş resimleri bırak: her biri bellekte birkaç MB tutuyor ve defterler arasında birikiyordu.
+export const clearImageCache = () => images.clear();
+
 // Dışa aktarma / küçük resimden önce resimlerin yüklenmesini bekle; bozuk bir resim her şeyi kilitlemesin diye en fazla 4 sn.
 export async function preloadImages(strokes) {
   const waits = strokes
