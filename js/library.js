@@ -5,6 +5,7 @@ import { openPdf, pageSizes, isPasswordError } from './pdf.js';
 import { renderThumb, THUMB_VERSION } from './render.js';
 import { createBackup, readBackup, restoreBackup, lastBackupTime, markBackedUp } from './backup.js';
 import { uid, collator, formatDate, escapeHtml, loadJSON, saveJSON, round2, fold } from './util.js';
+import { isNative, nativeSaveFile } from './native.js';
 
 const A4 = { w: 595.28, h: 841.89 };
 export const FOLDER_COLORS = ['#3b82f6', '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#ec4899', '#64748b'];
@@ -316,6 +317,8 @@ function backupAgeText() {
 
 // Tarayıcı notları "kalıcı" saklıyor mu? Değilse tablette yer azaldığında silebilir.
 async function storageIsPersistent() {
+  // Android uygulamasında notlar uygulamanın kendi alanında; sistem onları yer açmak için silmez.
+  if (isNative) return true;
   try {
     return (await navigator.storage?.persisted?.()) ?? true;
   } catch {
@@ -351,7 +354,7 @@ async function renderBackupHint(notebooks) {
 }
 
 async function backupMenu() {
-  const canShare = !!navigator.canShare;
+  const canShare = isNative || !!navigator.canShare;
   const action = await ui.actionSheet({
     title: 'Yedekleme · ' + backupAgeText() + ((await storageIsPersistent()) ? '' : ' ⚠ Depolama kalıcı değil.'),
     actions: [
@@ -369,6 +372,14 @@ async function makeBackup(share) {
   try {
     const { blob, counts } = await createBackup();
     const name = `not-yedek-${new Date().toISOString().slice(0, 10)}.notyedek`;
+    if (isNative) {
+      // Android uygulamasında indirme / paylaşma telefonun kendi sistemiyle yapılır.
+      await nativeSaveFile(blob, name, 'application/octet-stream', share ? 'share' : 'save');
+      markBackedUp();
+      ui.toast(share ? 'Yedek hazır, nereye göndereceğini seç' : `Yedek İndirilenler klasörüne kaydedildi: ${counts.notebooks} defter, ${counts.folders} klasör`);
+      renderLibrary();
+      return;
+    }
     if (share) {
       const file = new File([blob], name, { type: 'application/octet-stream' });
       if (navigator.canShare({ files: [file] })) {

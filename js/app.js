@@ -1,4 +1,5 @@
-import { initLibrary, currentFolder, showFolder } from './library.js';
+import { initLibrary, currentFolder, showFolder, importPdf } from './library.js';
+import { isNative, onIncomingPdf } from './native.js';
 import { APP_VERSION } from './util.js';
 import { initEditor, openEditor, closeEditor, isEditorOpen, closeOverlays, openSettings } from './editor.js';
 import { toast } from './ui.js';
@@ -39,6 +40,21 @@ initEditor({ onBack: () => history.back() });
 // Bu yüzden geçmişe yalnızca kullanıcı bir klasöre / deftere dokunduğunda adım ekleniyor.
 history.replaceState({ folder: 'root' }, '');
 showFolder('root');
+
+// WhatsApp vb. uygulamalardan "Şununla aç" / "Paylaş" ile gelen PDF açık klasöre eklenip açılır.
+// Bir defter açıksa önce o kaydedilip kapatılır.
+onIncomingPdf(async (blob, name) => {
+  const nb = await importPdf(blob, name);
+  if (!nb) return;
+  if (isEditorOpen()) {
+    closeOverlays();
+    await closeEditor();
+    history.replaceState({ folder: currentFolder(), notebook: nb.id }, '');
+    await openEditor(nb.id);
+  } else {
+    await showNotebook(nb.id);
+  }
+});
 renderVersion();
 
 function renderVersion() {
@@ -52,6 +68,7 @@ function renderVersion() {
 navigator.storage?.persist?.().catch(() => {});
 
 // Çevrimdışı çalışma (yalnızca https ya da localhost üzerinden açıldığında mümkün).
-if ('serviceWorker' in navigator && window.isSecureContext) {
+// Android uygulamasında dosyalar zaten cihazın içinde; service worker'a gerek yok.
+if (!isNative && 'serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker kaydedilemedi', err));
 }

@@ -1,0 +1,15 @@
+{
+  "name": "not-defteri",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "www": "node scripts/build-www.mjs",
+    "sync": "node scripts/build-www.mjs && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0"
+  }
+}

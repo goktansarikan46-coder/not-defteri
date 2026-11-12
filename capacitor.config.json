@@ -1,0 +1,8 @@
+{
+  "appId": "com.goktan.notdefteri",
+  "appName": "Not Defteri",
+  "webDir": "www",
+  "android": {
+    "webContentsDebuggingEnabled": true
+  }
+}

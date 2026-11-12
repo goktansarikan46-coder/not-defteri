@@ -2,6 +2,7 @@ import * as db from './db.js';
 import * as ui from './ui.js';
 import { icon } from './icons.js';
 import { openPdf } from './pdf.js';
+import { isNative, nativeSaveFile } from './native.js';
 import {
   drawStroke,
   drawStrokes,
@@ -2454,7 +2455,7 @@ async function toggleBookmark(idx) {
 async function exportPdf() {
   if (!ed) return;
   await flushSaves();
-  const canShare = !!navigator.canShare;
+  const canShare = isNative || !!navigator.canShare;
   const choice = canShare
     ? await ui.actionSheet({ title: 'Dışa aktar', actions: [{ id: 'download', label: 'PDF olarak indir' }, { id: 'share', label: 'Paylaş…' }] })
     : 'download';
@@ -2464,6 +2465,11 @@ async function exportPdf() {
     const bytes = await buildPdf();
     const name = (ed.nb.title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'not') + '.pdf';
     const blob = new Blob([bytes], { type: 'application/pdf' });
+    if (isNative) {
+      await nativeSaveFile(blob, name, 'application/pdf', choice === 'share' ? 'share' : 'save');
+      if (choice !== 'share') ui.toast('PDF "İndirilenler" klasörüne kaydedildi');
+      return;
+    }
     if (choice === 'share') {
       const file = new File([blob], name, { type: 'application/pdf' });
       if (navigator.canShare({ files: [file] })) {
